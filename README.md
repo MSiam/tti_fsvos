@@ -1,18 +1,11 @@
-# Region Proportion Regularized Inference (RePRI) for Few-Shot Segmentation
-
-Update 03/21: Paper accepted at CVPR 2021 !
-
-Code for the paper : "Few-Shot Segmentation Without Meta-Learning: A Good Transductive Inference Is All You Need?", freely available at https://arxiv.org/abs/2012.06166:
-
-<img src="figures/intro_image.png" width="800" height="400"/>
-
+# Temporal Transductive Inference for Few-shot Video Semantic Segmentation
 
 ## Getting Started
 
 ### Minimum requirements
 
 1. Software :
-+ torch==1.7.0
++ torch==1.9.0
 + numpy==1.18.4
 + cv2==4.2.0
 + pyyaml==5.3.1
@@ -26,6 +19,8 @@ pip install git+https://github.com/luizgh/visdom_logger.git
  2. Hardware : A 11 GB+ CUDA-enabled GPU
 
 ### Download data
+
+Instructions from RePRI
 
 #### All pre-processed from Google Drive
 
@@ -56,6 +51,33 @@ python
 cd data/coco
 python create_masks.py
  ```
+#### Download VSPW Data
+
+* Download Data from webpage
+* expected folder structure
+
+```
+VSPW/data
+├── seq1
+│   ├── origin
+│   ├── mask
+│   ├── flow
+└── seq2
+|    ├── origin
+|    └── mask ....
+```
+
+* Or you can download processed data here:
+```
+wget https://www.dropbox.com/s/th01g9niwvfd3re/vspw_data.zip?dl=0
+```
+
+##### Download TAO Dataset
+* From their webpage, for HAVS and AVA you need to send them for request first then they send video urls
+* You can use this processed
+```
+wget 
+```
 
 #### About the train/val splits
 
@@ -98,88 +120,13 @@ bash scripts/test.sh {data} {shot} {[gpu_ids]} {layers}
 This script will test successively on all folds of the current dataset. Below are presented specific commands for several experiments.
 
 
-### Pascal-5i
-
-Results :
-|(1 shot/5 shot)|   Arch     | Fold-0 	   | Fold-1 	 | Fold-2 	   | Fold-3      | Mean 		|
-| 	   ---      |    ---     |      ---    |	   ---   |	   ---     |    ---      |  ---  		|
-| RePRI       	| Resnet-50  | 60.2 / 64.5 | 67.0 / 70.8 | 61.7 / 71.7 | 47.5 / 60.3 | 59.1 / 66.8	|
-| Oracle-RePRI	| Resnet-50  | 72.4 / 75.1 | 78.0 / 80.8 | 77.1 / 81.4 | 65.8 / 74.4 | 73.3 / 77.9  |
-| RePRI       	| Resnet-101 | 59.6 / 66.2 | 68.3 / 71.4 | 62.2 / 67.0 | 47.2 / 57.7 | 59.4 / 65.6	|
-| Oracle-RePRI	| Resnet-101 | 73.9 / 76.8 | 79.7 / 81.7 | 76.1 / 79.5 | 65.1 / 74.5 | 73.7 / 78.1  |
-
 Command:
 ```python
-bash scripts/test.sh pascal 1 [0] 50  # 1-shot
-bash scripts/test.sh pascal 5 [0] 50  # 5-shot
+bash scripts/test.sh taovos 1 [0] 50  # 1-shot TAO
+bash scripts/test.sh vspw 1 [0] 50  # 1-shot VSPW
 ```
-
-### Coco-20i
-
-Results :
-|(1 shot/5 shot)|   Arch     | Fold-0 	   | Fold-1 	 | Fold-2 	   | Fold-3      | Mean 		|
-| 	   ---      |    ---     |      ---    |	   ---   |	   ---     |    ---      |  ---			|
-| RePRI       	| Resnet-50  | 31.2 / 38.5 | 38.1 / 46.2 | 33.3 / 40.0 | 33.0 / 43.6 | 34.0/42.1    |
-| Oracle-RePRI	| Resnet-50  | 49.3 / 51.5 | 51.4 / 60.8 | 38.2 / 54.7 | 41.6 / 55.2 |	45.1 / 55.5 |
-
-Command :
-```python
-bash scripts/test.sh coco 1 [0] 50  # 1-shot
-bash scripts/test.sh coco 5 [0] 50  # 5-shot
-```
-
-### Coco-20i -> Pascal-VOC
-
-
-The folds used for cross-domain experiments are presented in the image below:
-<img src="figures/coco2pascal.png" width="800" height="200"/>
-
-Results :
-
-|(1 shot/5 shot)|   Arch     | Fold-0 	   | Fold-1 	 | Fold-2 	   | Fold-3      | Mean 		|
-| 	   ---      |    ---     |      ---    |	   ---   |	   ---     |    ---      |  --- 		|
-| RePRI       	| Resnet-50  | 52.2 / 56.5 | 64.3 / 68.2 | 64.8 / 70.0 | 71.6 / 76.2 | 63.2 / 67.7  |
-| Oracle-RePRI	| Resnet-50  | 69.6 / 73.5 | 71.7 / 74.9 | 77.6 / 82.2 | 86.2 / 88.1 | 76.2 / 79.7  |
-
-
-Command :
-```python
-bash scripts/test.sh coco2pascal 1 [0] 50  # 1-shot
-bash scripts/test.sh coco2pascal 5 [0] 50  # 5-shot
-```
-
-
-
-## Monitoring metrics
-
-This code offers two options to visualize/plot metrics during training
-
-### Live monitoring with visdom
-For both training and testing, you can monitor metrics using visdom_logger (https://github.com/luizgh/visdom_logger). To install this package, simply clone the repo and install it with pip:
- ```
- git clone https://github.com/luizgh/visdom_logger.git
- pip install -e visdom_logger
- ```
- Then, you need to start a visdom server with:
- ```
- python -m visdom.server -port 8098
- ```
-Finally, add the line visdom_port 8098 in the options in scripts/train.sh or scripts/test.sh, and metrics will be displayed at this port. You can monitor them through your navigator.
-
-### Good old fashioned matplotlib
-
-Alternatively, this code also saves important metrics (training loss, accuracy and validation loss and accuracy) as training progresses in the form of numpy files (.npy). Then, you can plot these metrics with:
-```python
-bash scripts/plot_training.sh model_ckpt
-```
-
-## Contact
-
-For further questions or details, please post an issue or directly reach out to Malik Boudiaf (malik.boudiaf.1@etsmtl.net)
-
 
 ## Acknowledgments
 
-We gratefully thank the authors of https://github.com/Jia-Research-Lab/PFENet, as well as https://github.com/hszhao/semseg from which some parts of our code are inspired.
-
+We gratefully thank the authors of https://github.com/mboudiaf/RePRI-for-Few-Shot-Segmentation for building upon their code.
 
