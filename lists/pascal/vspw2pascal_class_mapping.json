@@ -1,0 +1,11 @@
+{
+    "airplane": "aeroplane",
+    "ship_or_boat": "boat",
+    "cattle": "cow",
+    "chair_or_seat": "chair",
+    "table_or_desk": "diningtable",
+    "flower_pot_or_vase": "pottedplant",
+    "screen_or_television": "tvmonitor",
+    "bottle_or_cup": "bottle",
+    "motorcycle": "motorbike"
+}
