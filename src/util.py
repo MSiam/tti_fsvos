@@ -14,6 +14,23 @@ import argparse
 A = TypeVar("A")
 B = TypeVar("B")
 
+def generate_roi_grid(h, w):
+    roi = torch.zeros((h*w, h*w))
+    window = 10
+    for y in range(h):
+        for x in range(w):
+            cidx = y*w+x
+            for ky in range(-window//2, window//2):
+                for kx in range(-window//2, window//2):
+
+                    iky = y+ky if y+ky > 0 else 0
+                    iky = iky if iky < h else h-1
+                    ikx = x+kx if x+kx > 0 else 0
+                    ikx = ikx if ikx < w else w-1
+
+                    kidx = iky*w + ikx
+                    roi[cidx, kidx] = 1
+    return roi.cuda()
 
 def main_process(args: argparse.Namespace) -> bool:
     if args.distributed:
@@ -78,6 +95,27 @@ def get_model_dir(args: argparse.Namespace) -> str:
                         f'mixup={args.mixup}')
     return path
 
+def denorm(img, mean=None, scale=None):
+    if mean is None:
+        mean = [0.485, 0.456, 0.406]
+        scale = [0.229, 0.224, 0.225]
+
+    img = img.permute(1,2,0)
+    img = img * torch.tensor(scale) + torch.tensor(mean)
+    img = img.permute(2, 0, 1).cpu().numpy()
+    img = np.asarray(img*255, np.uint8)
+    return img
+
+def map_label(lbl, colors=None, nclasses=None):
+    if colors is None:
+        colors = {i+1: np.random.random((1,3))*255 for i in range(nclasses)}
+
+    colored_lbl = np.zeros((*lbl.shape, 3), dtype=np.uint8)
+    for cls in np.unique(lbl):
+        if cls == 0:
+            continue
+        colored_lbl[lbl==cls] = colors[cls]
+    return colored_lbl.transpose(2,0,1), colors
 
 def to_one_hot(mask: torch.tensor,
                num_classes: int) -> torch.tensor:

@@ -1,3 +1,4 @@
+sortedcontainers
 torch
 torchvision
 numpy
@@ -6,4 +7,5 @@ opencv-python
 pyyaml
 tqdm
 visdom
-logging
+cython
+https://github.com/youtubevos/cocoapi.git

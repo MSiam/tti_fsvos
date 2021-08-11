@@ -55,7 +55,7 @@ MODEL:
 
 EVALUATION:
   episodic_val: False
-  temporal_episodic_val: 2
+  temporal_episodic_val: 2 #0: None, 1: TAO, 2: VSPW, 3: YTVIS
   shot: 1
   random_shot: False
   norm_feat: True
@@ -82,7 +82,7 @@ CLASSIFIER:
   FB_param_update: [10]
   scl_temperature: 0.1
   nviews: 2
-  tloss_type: pos_neg_steer_avg
+  tloss_type: [temporal_repri, pos_neg_steer_avg]
   cls_visdom_freq: 5
 
 DISTRIBUTED:

@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn.functional as F
 from src.util import batch_intersectionAndUnionGPU
@@ -8,8 +9,9 @@ from typing import Tuple
 from visdom_logger import VisdomLogger
 import numpy as np
 from src.losses.temporal_losses import temporal_positive, temporal_contrastive, \
-        temporal_positive_steered, temporal_negative_steered_spatial
+        temporal_positive_steered, temporal_negative_steered_spatial, correlation_based_consistency
 from src.losses.supconloss import SupConLoss
+from scipy.ndimage.morphology import distance_transform_edt, grey_erosion
 
 class Classifier(object):
     def __init__(self, args):
@@ -228,6 +230,26 @@ class Classifier(object):
         avg_prototype = avg_prototype.sum(dim=0)
         return avg_prototype
 
+    def temporal_repri(self, probas, valid_pixels, seq_names):
+        loss = torch.zeros(probas.shape[0]).cuda()
+
+        marginal = (valid_pixels.unsqueeze(2) * probas).sum(dim=(1, 3, 4))
+        marginal /= valid_pixels.sum(dim=(1, 2, 3)).unsqueeze(1)
+        window = 3
+        if marginal.shape[0] < window:
+            return loss
+
+        seq_names_ = np.stack([seq_names[:-2], seq_names[1:-1], seq_names[2:]])
+        seq_flags = torch.tensor(
+                (seq_names_[0] == seq_names_[1]) * (seq_names_[0] == seq_names_[2])
+        ).long().cuda()
+
+        marginal_window = marginal.unfold(0, window, 1)
+        margin = 0.0
+        loss[:marginal_window.shape[0]] = seq_flags * F.relu(torch.abs(\
+                marginal_window.unsqueeze(3) - marginal_window.unsqueeze(2)) -margin).sum(1).mean(dim=[1,2])
+        return loss
+
     def get_temporal_loss(self,
                           features: torch.tensor,
                           valid_pixels: torch.tensor,
@@ -236,6 +258,8 @@ class Classifier(object):
                           steering_features: torch.tensor,
                           steering_val_pixels: torch.tensor,
                           steering_mask: torch.tensor,
+                          roi_grid: torch.tensor = None,
+                          consistency_type: str = '',
                           reduction: str = 'none'):
         """
         Compute temporal consistency loss as a regularizer
@@ -248,49 +272,162 @@ class Classifier(object):
             steering_mask: mask [n_task x shot x n_cls x H x W]
             seq_names: List of sequence names [n_task]
         """
-        if self.tloss_type == 'pos_steer':
-            # 0- Extract MAP Features on Support set
-            steering_mask = steering_mask[:, :, 1:] # Access Foreground Mask
-            steering_mask = steering_mask * steering_val_pixels.unsqueeze(2)
-            steering_protos = (steering_features * steering_mask).sum(dim=(1, 3, 4))
-            steering_protos /= (steering_mask.sum(dim=(1, 3, 4)) + 1e-10)
-            steering_protos = F.normalize(steering_protos, dim=1)
+        if type(self.tloss_type) != list:
+            self.tloss_type = [self.tloss_type]
 
-        # 1- Extract MAP Features with Prob maps
-        probas = probas[:, :, 1:] # Access Foreground
-        valid_probas = probas * valid_pixels.unsqueeze(2)
-        protos = (features * valid_probas).sum(dim=(1, 3, 4))
-        protos /= (probas.sum(dim=(1, 3, 4)) + 1e-10)
-        protos = F.normalize(protos, dim=1)
+        total_loss = torch.zeros(features.shape[0]).cuda()
+        for loss_ in self.tloss_type:
+            if loss_ == 'pos_steer':
+                # 0- Extract MAP Features on Support set
+                steering_mask = steering_mask[:, :, 1:] # Access Foreground Mask
+                steering_mask = steering_mask * steering_val_pixels.unsqueeze(2)
+                steering_protos = (steering_features * steering_mask).sum(dim=(1, 3, 4))
+                steering_protos /= (steering_mask.sum(dim=(1, 3, 4)) + 1e-10)
+                steering_protos = F.normalize(steering_protos, dim=1)
 
-        # 2- Compute consistency among same sequence
-        seq_names = np.array(seq_names)
-        if self.tloss_type == 'pos':
-            loss = temporal_positive(protos, seq_names)
-        elif self.tloss_type == 'pos_steer':
-            loss = temporal_positive_steered(protos, seq_names, steering_protos)
-        elif self.tloss_type == 'pos_steer_avg':
-            avg_protos = self._extract_temporal_protos(seq_names)
-            loss = temporal_positive_steered(protos, seq_names, avg_protos)
-        elif self.tloss_type == 'pos_neg_steer_avg':
-            avg_protos = self._extract_temporal_protos(seq_names)
-            pos_loss = temporal_positive_steered(protos, seq_names, avg_protos)
-            neg_loss = temporal_negative_steered_spatial(features, probas, valid_pixels, avg_protos)
-            loss = pos_loss + neg_loss
-        elif self.tloss_type == 'spatial_pos_steer':
-            avg_protos = self._extract_temporal_protos(seq_names)
-            logits = self.get_logits(features, ext_prototype=avg_prototype)
-            probas = self.get_probas(logits)
-            d_kl, cond_entropy, _ = self.get_entropies(valid_pixels_q,
-                                                        probas,
-                                                        reduction='none')
-            loss = d_kl + cond_entropy
-        elif self.tloss_type == 'contrastive':
-            loss = temporal_contrastive(protos, seq_names, self.nviews, self.supconloss)
+            if loss_ in ['pos', 'pos_steer', 'pos_steer_avg',
+                                   'pos_neg_steer_avg', 'contrastive']:
+                # 1- Extract MAP Features with Prob maps
+                probas = probas[:, :, 1:] # Access Foreground
+                valid_probas = probas * valid_pixels.unsqueeze(2)
+                protos = (features * valid_probas).sum(dim=(1, 3, 4))
+                protos /= (probas.sum(dim=(1, 3, 4)) + 1e-10)
+                protos = F.normalize(protos, dim=1)
+
+            # 2- Compute consistency among same sequence
+            seq_names = np.array(seq_names)
+            if loss_ == 'pos':
+                loss = temporal_positive(protos, seq_names)
+            elif loss_ == 'pos_steer':
+                loss = temporal_positive_steered(protos, seq_names, steering_protos)
+            elif loss_ == 'pos_steer_avg':
+                avg_protos = self._extract_temporal_protos(seq_names)
+                loss = temporal_positive_steered(protos, seq_names, avg_protos)
+            elif loss_ == 'pos_neg_steer_avg':
+                avg_protos = self._extract_temporal_protos(seq_names)
+                pos_loss = temporal_positive_steered(protos, seq_names, avg_protos)
+                neg_loss = temporal_negative_steered_spatial(features, probas, valid_pixels, avg_protos)
+                loss = pos_loss + neg_loss
+            elif loss_ == 'spatial_pos_steer':
+                avg_protos = self._extract_temporal_protos(seq_names)
+                logits = self.get_logits(features, ext_prototype=avg_prototype)
+                probas = self.get_probas(logits)
+                d_kl, cond_entropy, _ = self.get_entropies(valid_pixels_q,
+                                                            probas,
+                                                            reduction='none')
+                loss = d_kl + cond_entropy
+            elif loss_ == 'contrastive':
+                loss = temporal_contrastive(protos, seq_names, self.nviews, self.supconloss)
+            elif loss_ == 'fb_consistency':
+                loss = self.enforce_fb_consistency(features, probas, seq_names, valid_pixels,
+                                                   roi_grid, consistency_type)
+            elif loss_ == 'ftune_pseudogt':
+                loss = self.ftune_pseudogt(features, probas, seq_names, valid_pixels)
+            elif loss_ == 'ftune_pseudogt_disttransform':
+                loss = self.ftune_pseudogt(features, probas, seq_names, valid_pixels,
+                                           disttransform=True)
+            elif loss_ == 'temporal_repri':
+                loss = self.temporal_repri(probas, valid_pixels, seq_names)
+
+            total_loss += loss
 
         if reduction == 'mean':
-            loss = loss.mean()
+            total_loss = total_loss.mean()
 
+        return total_loss
+
+    def ftune_pseudogt(self, features: torch.tensor, probas: torch.tensor,
+                       seq_names: List[str], valid_pixels: torch.tensor,
+                       disttransform: bool = False):
+
+        masks = probas[:1].argmax(dim=2)
+        valid_pixels = valid_pixels[:1]
+
+        if disttransform:
+            new_masks = torch.ones(masks.shape).cuda() * 255
+            new_valid_pixels = torch.ones(valid_pixels.shape).cuda()
+            new_valid_pixels[valid_pixels==0] = 0
+
+            # Create distance transform to create pseudo gt with ignore pixels around boundary
+            # To avoid propagation of errors
+            erosion_size = 3
+            pos_th = 0.8
+            h, w = features.shape[-2:]
+            neg_th = 0.25 * np.sqrt(h**2+w**2)
+
+            eroded_mask = grey_erosion(masks.cpu(), size=(1,1,erosion_size, erosion_size))
+            # Compute distance transform
+            dt = distance_transform_edt(np.logical_not(eroded_mask))
+
+            positives = probas[0,:,1:] > pos_th
+            negatives = torch.tensor(dt > neg_th)
+            new_masks[positives] = 1
+            new_masks[negatives] = 0
+            new_valid_pixels[new_masks==255] = 0
+            new_masks[new_masks==255] = 0
+            masks = new_masks.long()
+            valid_pixels = new_valid_pixels
+
+        # Ftune with first frame
+        one_hot_gt_pseudo = to_one_hot(masks, self.num_classes).repeat( \
+                                           features.shape[0], 1 , 1, 1, 1)
+        valid_pixels = valid_pixels[0].repeat(features.shape[0], 1, 1, 1)
+
+        feats = features[:1].repeat(features.shape[0], 1, 1, 1, 1)
+        logits = self.get_logits(feats)
+        q_probas = self.get_probas(logits)
+
+        ce = self.get_ce(q_probas, valid_pixels, one_hot_gt_pseudo, reduction='none')
+        return ce
+
+    def enforce_fb_consistency(self, features: torch.tensor, probas: torch.tensor,
+                               seq_names: List[str], valid_pixels: torch.tensor,
+                               roi_grid: torch.tensor, consistency_type='forward'):
+        """
+        Enforce forward backward consistency of the predictions
+        features: query features [n_tasks x 1 x C x H x W]
+        probas: probabilities [n_tasks x 1 x 2 x H x W]
+        seq_names: array of sequence names [n_tasks]
+        valid_pixels: flag of 1 indicate valid pixel, ignore otherwise [n_tasks x 1 x H x W]
+        roi_grid: Grid used to determine region of interest [HW x HW]
+        """
+        assert len(np.unique(seq_names)) == 1, "Not implemented yet to VSPW/TAO Only YTVIS Episodes"
+        loss = 0
+        h, w = features.shape[-2:]
+        # Remove dimension for # Query images per task (currently is just 1)
+        features = features.detach().squeeze(1)
+        probas = probas = probas.squeeze(1)
+        valid_pixels = valid_pixels.squeeze(1)
+
+        # TODO: Check why one sequence is only 1 frame?
+        if features.shape[0] < 3:
+            return torch.tensor([0]).cuda()
+
+        # Compute over pairs of frames
+        skip = 2
+        if "rnd" in consistency_type:
+            n = int(0.1 * features.shape[0])
+            rnd_idcs = torch.randint(0, features.shape[0]-skip, [n])
+            consistency_type = consistency_type.replace('rnd_', '')
+        else:
+            n = features.shape[0] - 11
+            rnd_idcs = torch.arange(1, features.shape[0]-skip)
+
+        features = features.view(*features.shape[:2], -1)
+        for i in range(n):
+            # Forward Consistency based on Correlation HW x HW
+            idx = rnd_idcs[i]
+            if consistency_type in ["forward", "forback"]:
+                #next_idx = int(torch.randint(int(idx), features.shape[0]-1, (1,)))
+                next_idx = idx + skip
+                loss += correlation_based_consistency(features[idx].unsqueeze(1), features[next_idx].unsqueeze(2),
+                                                      probas[idx], probas[next_idx], valid_pixels[idx], roi_grid, h, w)
+            if consistency_type in ["backward", "forback"]:
+                back_idx = idx - skip
+                loss += correlation_based_consistency(features[back_idx].unsqueeze(1), features[idx].unsqueeze(2),
+                                                      probas[back_idx], probas[idx], valid_pixels[idx], roi_grid, h, w)
+            if consistency_type not in ["forward", "backward", "forback"]:
+                raise NotImplementedError()
         return loss
 
     def RePRI(self,
@@ -301,7 +438,10 @@ class Classifier(object):
               subcls: List,
               n_shots: torch.tensor,
               seqs: List[str],
-              callback: VisdomLogger) -> torch.tensor:
+              callback: VisdomLogger,
+              weights: List[int] = None,
+              roi_grid: torch.tensor = None,
+              consistency_type: str = '') -> torch.tensor:
         """
         Performs RePRI inference
 
@@ -322,7 +462,11 @@ class Classifier(object):
                      shape [n_tasks,]
         """
         deltas = torch.zeros_like(n_shots)
-        l1, l2, l3, l4 = self.weights
+        if weights is None:
+            l1, l2, l3, l4 = self.weights
+        else:
+            l1, l2, l3, l4 = weights
+
         if l2 == 'auto':
             l2 = 1 / n_shots
         else:
@@ -361,7 +505,8 @@ class Classifier(object):
                                                               reduction='none')
             if original_l4 != 0 and self.enable_temporal:
                 tloss = self.get_temporal_loss(features_q, valid_pixels_q, proba_q,
-                                               seqs, features_s, valid_pixels_s, one_hot_gt_s)
+                                               seqs, features_s, valid_pixels_s, one_hot_gt_s,
+                                               roi_grid=roi_grid, consistency_type=consistency_type)
             else:
                 tloss = 0
 
@@ -382,6 +527,7 @@ class Classifier(object):
             if callback is not None and (iteration + 1) % self.visdom_freq == 0:
                 self.update_callback(callback, iteration, features_s, features_q, subcls, gt_s, gt_q,
                                      seqs=seqs, tti_flag=(original_l4!=0 and self.enable_temporal))
+
         return deltas
 
     def get_mIoU(self,
@@ -408,9 +554,15 @@ class Classifier(object):
         for i, classes_ in enumerate(subcls):
             inter_count[0] += intersection[i, 0, 0]
             union_count[0] += union[i, 0, 0]
-            for j, class_ in enumerate(classes_):
-                inter_count[class_] += intersection[i, 0, j + 1]  # Do not count background
-                union_count[class_] += union[i, 0, j + 1]
+
+            if type(classes_) == list:
+                for j, class_ in enumerate(classes_):
+                    inter_count[class_] += intersection[i, 0, j + 1]  # Do not count background
+                    union_count[class_] += union[i, 0, j + 1]
+            else:
+                inter_count[classes_] += intersection[i, 0, 1]
+                union_count[classes_] += union[i, 0, 1]
+
         class_IoU = torch.tensor([inter_count[subcls] / union_count[subcls] for subcls in inter_count if subcls != 0])
         if reduction == 'mean':
             return class_IoU.mean()
@@ -420,7 +572,8 @@ class Classifier(object):
     def update_callback(self, callback, iteration: int, features_s: torch.tensor,
                         features_q: torch.tensor, subcls: List[int],
                         gt_s: torch.tensor, gt_q: torch.tensor,
-                        seqs: List[str] = None, tti_flag:bool = False) -> None:
+                        seqs: List[str] = None, tti_flag:bool = False,
+                        roi_grid:torch.tensor = None) -> None:
         """
         Updates the visdom callback in case live visualization of metrics is desired
 
@@ -463,9 +616,13 @@ class Classifier(object):
             d_kl, cond_entropy, marginal = self.get_entropies(valid_pixels_q,
                                                               proba_q,
                                                               reduction='mean')
+
             if tti_flag:
+                # TODO: Get Consistency type to be passed properly
                 tloss = self.get_temporal_loss(features_q, valid_pixels_q, proba_q,
-                                               seqs, features_s, valid_pixels_s, one_hot_gt_s, reduction='mean')
+                                               seqs, features_s, valid_pixels_s, one_hot_gt_s,
+                                               roi_grid=roi_grid, consistency_type='',
+                                               reduction='mean')
                 callback.scalars(['tti'], iteration, [tloss.mean()], title='Temporal Transductive Inference')
             marginal2oracle = (oracle_FB_param * torch.log(oracle_FB_param / marginal + 1e-10)).sum(1).mean()
             FB_param2oracle = (oracle_FB_param * torch.log(oracle_FB_param / self.FB_param + 1e-10)).sum(1).mean()

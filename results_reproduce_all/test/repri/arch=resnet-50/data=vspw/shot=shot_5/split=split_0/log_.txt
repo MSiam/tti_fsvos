@@ -1,0 +1,64 @@
+==> Running DDP checkpoint example on rank 0.
+=> loading weight 'model_ckpt/pascal/split=0/model/pspnet_resnet50/smoothing=True/mixup=False/best.pth'
+=> loaded weight 'model_ckpt/pascal/split=0/model/pspnet_resnet50/smoothing=True/mixup=False/best.pth'
+INFO: pascal -> pascal
+INFO: 0 -> 0
+>> Start Filtering classes 
+>> Removed classes = [] 
+>> Kept classes = ['airplane', 'bicycle', 'bird', 'boat', 'bottle'] 
+Processing data for [1, 2, 3, 4, 5]
+==> Start testing
+Test: [200/1000] mIoU 0.2158 Loss 0.1112 (0.2445) 
+Test: [400/1000] mIoU 0.2418 Loss 0.4246 (0.2796) 
+Test: [600/1000] mIoU 0.2665 Loss 0.2272 (0.2678) 
+Test: [800/1000] mIoU 0.3123 Loss 0.5237 (0.3671) 
+Test: [1000/1000] mIoU 0.3534 Loss 0.3704 (0.3690) 
+mIoU---Val result: mIoU 0.3534.
+Class 4 : 0.4897
+Class 5 : 0.0000
+Class 2 : 0.5805
+Class 1 : 0.3433
+Test: [200/1000] mIoU 0.3278 Loss 0.1993 (0.2112) 
+Test: [400/1000] mIoU 0.3054 Loss 0.3773 (0.3346) 
+Test: [600/1000] mIoU 0.3397 Loss 0.0954 (0.2613) 
+Test: [800/1000] mIoU 0.4074 Loss 0.1463 (0.2255) 
+Test: [1000/1000] mIoU 0.4009 Loss 0.0941 (0.2104) 
+mIoU---Val result: mIoU 0.4009.
+Class 4 : 0.3289
+Class 2 : 0.4819
+Class 5 : 0.0890
+Class 1 : 0.7038
+Test: [200/1000] mIoU 0.1962 Loss 0.1314 (0.1367) 
+Test: [400/1000] mIoU 0.2401 Loss 0.2415 (0.2019) 
+Test: [600/1000] mIoU 0.2694 Loss 0.2528 (0.2094) 
+Test: [800/1000] mIoU 0.3121 Loss 0.2624 (0.3051) 
+Test: [1000/1000] mIoU 0.3546 Loss 0.4153 (0.3140) 
+mIoU---Val result: mIoU 0.3546.
+Class 4 : 0.5129
+Class 5 : 0.0000
+Class 2 : 0.5229
+Class 1 : 0.3827
+Test: [200/1000] mIoU 0.2674 Loss 0.3088 (0.2278) 
+Test: [400/1000] mIoU 0.2720 Loss 0.4354 (0.3223) 
+Test: [600/1000] mIoU 0.2975 Loss 0.0887 (0.2579) 
+Test: [800/1000] mIoU 0.4006 Loss 0.1930 (0.2309) 
+Test: [1000/1000] mIoU 0.3631 Loss 0.4004 (0.2366) 
+mIoU---Val result: mIoU 0.3631.
+Class 4 : 0.2880
+Class 2 : 0.4514
+Class 5 : 0.0224
+Class 1 : 0.6908
+Test: [200/1000] mIoU 0.2274 Loss 0.1191 (0.0841) 
+Test: [400/1000] mIoU 0.2574 Loss 0.3546 (0.1708) 
+Test: [600/1000] mIoU 0.3025 Loss 0.2570 (0.2032) 
+Test: [800/1000] mIoU 0.3229 Loss 0.3843 (0.2983) 
+Test: [1000/1000] mIoU 0.3681 Loss 0.4029 (0.3143) 
+mIoU---Val result: mIoU 0.3681.
+Class 4 : 0.5260
+Class 5 : 0.0000
+Class 2 : 0.6038
+Class 1 : 0.3425
+Average mIoU over 5 runs --- 0.3680.
+Average Fscore over 5 runs --- 0.4920.
+Average Vconsistency over 5 runs --- 0.0069.
+Average runtime / run --- 129.4191.

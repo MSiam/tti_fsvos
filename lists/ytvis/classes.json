@@ -1,0 +1,50 @@
+{
+0: [
+    "person",
+    "skateboard",
+    "snake",
+    "duck",
+    "train",
+    "motorbike",
+    "deer",
+    "truck",
+    "snowboard",
+    "frog"
+],
+1: [
+    "giant_panda",
+    "sedan",
+    "monkey",
+    "cat",
+    "horse",
+    "giraffe",
+    "owl",
+    "zebra",
+    "boat",
+    "eagle"
+],
+2: [
+    "lizard",
+    "ape",
+    "hand",
+    "cow",
+    "turtle",
+    "leopard",
+    "surfboard",
+    "tiger",
+    "shark",
+    "earless_seal"
+],
+3: [
+    "parrot",
+    "dog",
+    "rabbit",
+    "fish",
+    "bear",
+    "fox",
+    "airplane",
+    "elephant",
+    "mouse",
+    "tennis_racket"
+]
+}

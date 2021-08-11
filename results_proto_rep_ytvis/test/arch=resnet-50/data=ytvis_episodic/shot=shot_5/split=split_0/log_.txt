@@ -1,0 +1,211 @@
+==> Running DDP checkpoint example on rank 0.
+=> loading weight 'model_ckpt/ytvis/split=0/model/pspnet_resnet50/smoothing=True/mixup=False/best.pth'
+=> loaded weight 'model_ckpt/ytvis/split=0/model/pspnet_resnet50/smoothing=True/mixup=False/best.pth'
+loading annotations into memory...
+Done (t=9.10s)
+creating index...
+index created!
+data set index:  0
+==> Start testing
+Test: [600/0] mIoU 0.3738 Loss 1.3608 (0.1742) 
+Test: [600/0] mIoU 0.3557 Loss 1.2749 (0.1981) 
+Test: [2200/0] mIoU 0.4503 Loss 0.1912 (0.1661) 
+Test: [2200/0] mIoU 0.4250 Loss 0.2091 (0.1664) 
+Test: [2800/0] mIoU 0.4674 Loss 0.0272 (0.1539) 
+Test: [2800/0] mIoU 0.4415 Loss 0.0325 (0.1533) 
+Test: [11400/0] mIoU 0.4194 Loss 0.3398 (0.1860) 
+Test: [11400/0] mIoU 0.3897 Loss 0.3680 (0.1862) 
+Test: [15800/0] mIoU 0.4205 Loss 0.1355 (0.1841) 
+Test: [15800/0] mIoU 0.3901 Loss 0.1392 (0.1841) 
+Test: [19400/0] mIoU 0.3842 Loss 0.0827 (0.1712) 
+Test: [19400/0] mIoU 0.3618 Loss 0.0953 (0.1711) 
+Test: [22000/0] mIoU 0.4191 Loss 1.2488 (0.1831) 
+Test: [22000/0] mIoU 0.4021 Loss 1.2268 (0.1837) 
+========= Method tti===========
+mIoU---Val result: mIoU 0.4716.
+Class 1 : 0.4215
+Class 5 : 0.1362
+Class 9 : 0.6366
+Class 13 : 0.6184
+Class 17 : 0.2882
+Class 21 : 0.4861
+Class 25 : 0.7208
+Class 29 : 0.7334
+Class 33 : 0.0584
+Class 37 : 0.6168
+========= Method repri===========
+mIoU---Val result: mIoU 0.4615.
+Class 1 : 0.3905
+Class 5 : 0.1184
+Class 9 : 0.6252
+Class 13 : 0.6130
+Class 17 : 0.2683
+Class 21 : 0.4801
+Class 25 : 0.7133
+Class 29 : 0.7368
+Class 33 : 0.0544
+Class 37 : 0.6146
+Test: [600/0] mIoU 0.3495 Loss 1.2461 (0.1672) 
+Test: [600/0] mIoU 0.3396 Loss 1.2234 (0.1901) 
+Test: [2200/0] mIoU 0.4061 Loss 0.1495 (0.1745) 
+Test: [2200/0] mIoU 0.3833 Loss 0.1650 (0.1744) 
+Test: [3200/0] mIoU 0.4224 Loss 0.3241 (0.1573) 
+Test: [3200/0] mIoU 0.3952 Loss 0.3280 (0.1580) 
+Test: [7600/0] mIoU 0.3709 Loss 0.0602 (0.1763) 
+Test: [7600/0] mIoU 0.3391 Loss 0.0697 (0.1761) 
+Test: [8600/0] mIoU 0.3624 Loss 0.5113 (0.1809) 
+Test: [8600/0] mIoU 0.3288 Loss 0.4811 (0.1813) 
+Test: [12800/0] mIoU 0.3815 Loss 0.3955 (0.1920) 
+Test: [12800/0] mIoU 0.3497 Loss 0.3954 (0.1922) 
+Test: [13400/0] mIoU 0.3802 Loss 1.0792 (0.1935) 
+Test: [13400/0] mIoU 0.3475 Loss 1.0282 (0.1943) 
+Test: [14200/0] mIoU 0.3865 Loss 0.1462 (0.1920) 
+Test: [14200/0] mIoU 0.3535 Loss 0.1710 (0.1920) 
+========= Method tti===========
+mIoU---Val result: mIoU 0.4695.
+Class 1 : 0.3898
+Class 5 : 0.1036
+Class 9 : 0.6843
+Class 13 : 0.6905
+Class 17 : 0.3795
+Class 21 : 0.3083
+Class 25 : 0.7335
+Class 29 : 0.7157
+Class 33 : 0.0610
+Class 37 : 0.6283
+========= Method repri===========
+mIoU---Val result: mIoU 0.4592.
+Class 1 : 0.3576
+Class 5 : 0.0975
+Class 9 : 0.6858
+Class 13 : 0.6814
+Class 17 : 0.3591
+Class 21 : 0.2958
+Class 25 : 0.7283
+Class 29 : 0.7079
+Class 33 : 0.0560
+Class 37 : 0.6226
+Test: [600/0] mIoU 0.2996 Loss 0.8204 (0.3350) 
+Test: [600/0] mIoU 0.3019 Loss 0.7480 (0.3440) 
+Test: [2200/0] mIoU 0.2240 Loss 0.9669 (0.3751) 
+Test: [2200/0] mIoU 0.2248 Loss 0.7992 (0.3776) 
+Test: [2800/0] mIoU 0.2210 Loss 0.0355 (0.3622) 
+Test: [2800/0] mIoU 0.2229 Loss 0.0409 (0.3608) 
+Test: [11400/0] mIoU 0.2179 Loss 0.6812 (0.4122) 
+Test: [11400/0] mIoU 0.2195 Loss 0.5617 (0.4123) 
+Test: [12200/0] mIoU 0.2153 Loss 0.0882 (0.4141) 
+Test: [12200/0] mIoU 0.2172 Loss 0.0847 (0.4137) 
+Test: [12400/0] mIoU 0.2133 Loss 0.0150 (0.4166) 
+Test: [12400/0] mIoU 0.2153 Loss 0.0175 (0.4162) 
+Test: [14000/0] mIoU 0.2263 Loss 0.2510 (0.4116) 
+Test: [14000/0] mIoU 0.2283 Loss 0.1818 (0.4114) 
+Test: [15400/0] mIoU 0.2301 Loss 0.0730 (0.4070) 
+Test: [15400/0] mIoU 0.2325 Loss 0.1018 (0.4067) 
+Test: [25000/0] mIoU 0.4196 Loss 0.0192 (0.3498) 
+Test: [25000/0] mIoU 0.4163 Loss 0.0227 (0.3497) 
+========= Method tti===========
+mIoU---Val result: mIoU 0.4387.
+Class 1 : 0.2336
+Class 5 : 0.1185
+Class 9 : 0.5191
+Class 13 : 0.5968
+Class 17 : 0.2794
+Class 21 : 0.5251
+Class 25 : 0.7327
+Class 29 : 0.6863
+Class 33 : 0.0887
+Class 37 : 0.6069
+========= Method repri===========
+mIoU---Val result: mIoU 0.4352.
+Class 1 : 0.2362
+Class 5 : 0.1120
+Class 9 : 0.5186
+Class 13 : 0.5972
+Class 17 : 0.2675
+Class 21 : 0.5184
+Class 25 : 0.7262
+Class 29 : 0.6855
+Class 33 : 0.0860
+Class 37 : 0.6048
+Test: [600/0] mIoU 0.3141 Loss 1.4223 (0.2081) 
+Test: [600/0] mIoU 0.2953 Loss 1.3666 (0.2333) 
+Test: [2000/0] mIoU 0.3413 Loss 0.0535 (0.2038) 
+Test: [2000/0] mIoU 0.3168 Loss 0.0683 (0.2029) 
+Test: [3200/0] mIoU 0.3561 Loss 0.2994 (0.1877) 
+Test: [3200/0] mIoU 0.3281 Loss 0.3452 (0.1883) 
+Test: [5000/0] mIoU 0.3450 Loss 0.1215 (0.2004) 
+Test: [5000/0] mIoU 0.3170 Loss 0.1379 (0.2002) 
+Test: [5800/0] mIoU 0.3372 Loss 0.0424 (0.1919) 
+Test: [5800/0] mIoU 0.3093 Loss 0.0454 (0.1916) 
+Test: [6800/0] mIoU 0.3318 Loss 0.4121 (0.1940) 
+Test: [6800/0] mIoU 0.3044 Loss 0.3801 (0.1944) 
+Test: [14000/0] mIoU 0.3282 Loss 0.0765 (0.2235) 
+Test: [14000/0] mIoU 0.3013 Loss 0.0846 (0.2233) 
+Test: [15400/0] mIoU 0.3256 Loss 0.0231 (0.2239) 
+Test: [15400/0] mIoU 0.2984 Loss 0.0265 (0.2237) 
+Test: [22000/0] mIoU 0.4194 Loss 0.9186 (0.2081) 
+Test: [22000/0] mIoU 0.4095 Loss 0.8763 (0.2085) 
+Test: [25000/0] mIoU 0.4648 Loss 0.0046 (0.2173) 
+Test: [25000/0] mIoU 0.4597 Loss 0.0037 (0.2171) 
+========= Method tti===========
+mIoU---Val result: mIoU 0.4778.
+Class 1 : 0.3315
+Class 5 : 0.1170
+Class 9 : 0.6437
+Class 13 : 0.6194
+Class 17 : 0.3859
+Class 21 : 0.6092
+Class 25 : 0.7179
+Class 29 : 0.6702
+Class 33 : 0.0884
+Class 37 : 0.5952
+========= Method repri===========
+mIoU---Val result: mIoU 0.4717.
+Class 1 : 0.3051
+Class 5 : 0.1116
+Class 9 : 0.6388
+Class 13 : 0.6161
+Class 17 : 0.3794
+Class 21 : 0.6129
+Class 25 : 0.7083
+Class 29 : 0.6728
+Class 33 : 0.0838
+Class 37 : 0.5883
+Test: [600/0] mIoU 0.4882 Loss 0.4979 (0.1593) 
+Test: [600/0] mIoU 0.4760 Loss 0.5075 (0.1669) 
+Test: [2000/0] mIoU 0.4718 Loss 0.0933 (0.1688) 
+Test: [2000/0] mIoU 0.4609 Loss 0.0760 (0.1682) 
+========= Method tti===========
+mIoU---Val result: mIoU 0.4694.
+Class 1 : 0.4616
+Class 5 : 0.0834
+Class 9 : 0.6154
+Class 13 : 0.6116
+Class 17 : 0.2835
+Class 21 : 0.5082
+Class 25 : 0.7440
+Class 29 : 0.6896
+Class 33 : 0.0826
+Class 37 : 0.6141
+========= Method repri===========
+mIoU---Val result: mIoU 0.4614.
+Class 1 : 0.4472
+Class 5 : 0.0795
+Class 9 : 0.6139
+Class 13 : 0.6094
+Class 17 : 0.2486
+Class 21 : 0.5004
+Class 25 : 0.7375
+Class 29 : 0.6869
+Class 33 : 0.0786
+Class 37 : 0.6121
+========Final Evaluation of tti with weights [1.0, 'auto', 'auto', 'auto']============
+Average mIoU over 5 runs --- 0.4654.
+Average Fscore over 5 runs --- 0.5970.
+Average Vconsistency over 5 runs --- 0.0000.
+Average runtime / run --- 1738.3903.
+========Final Evaluation of repri with weights [1.0, 'auto', 'auto', 0.0]============
+Average mIoU over 5 runs --- 0.4578.
+Average Fscore over 5 runs --- 0.5886.
+Average Vconsistency over 5 runs --- 0.0000.
+Average runtime / run --- 2531.5220.

@@ -13,6 +13,7 @@ from .optimizer import get_optimizer, get_scheduler
 from .dataset.dataset import get_train_loader, get_val_loader
 from .util import intersectionAndUnionGPU, get_model_dir, AverageMeter, find_free_port
 from .util import setup, cleanup, main_process
+from .util import denorm, map_label
 from tqdm import tqdm
 from .test import standard_validate, episodic_validate
 from typing import Dict
@@ -54,7 +55,7 @@ def main_worker(rank: int,
         torch.cuda.manual_seed_all(args.manual_seed)
         random.seed(args.manual_seed)
 
-    callback = None if args.visdom_port == -1 else VisdomLogger(port=args.visdom_port)
+    callback = None if args.visdom_port == -1 else VisdomLogger(port=args.visdom_port, env=args.visdom_env)
 
     # ========== Model + Optimizer ==========
     model = get_model(args).to(rank)
@@ -71,14 +72,23 @@ def main_worker(rank: int,
     model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
     model = DDP(model, device_ids=[rank])
 
-    savedir = get_model_dir(args)
-
     # ========== Validation ==================
     validate_fn = episodic_validate if args.episodic_val else standard_validate
 
     # ========== Data  =====================
     train_loader, train_sampler = get_train_loader(args)
     val_loader, _ = get_val_loader(args)  # mode='train' means that we will validate on images from validation set, but with the bases classes
+
+    # ============ Resume model if exists =================
+    savedir = get_model_dir(args)
+    best_model_path = os.path.join(savedir, 'best.pth')
+    if os.path.exists(best_model_path) and args.resume_training:
+        print('Resuming Training from ', best_model_path)
+        best_model = torch.load(best_model_path)
+        model.load_state_dict(best_model['state_dict'])
+        optimizer.load_state_dict(best_model['optimizer'])
+        args.epochs = args.epochs - best_model['epoch']
+#        train_sampler.set_epoch(best_model['epoch'])
 
     # ========== Scheduler  ================
     scheduler = get_scheduler(args, optimizer, len(train_loader))
@@ -258,6 +268,11 @@ def do_epoch(args: argparse.Namespace,
         images = images.to(dist.get_rank(), non_blocking=True)
         gt = gt.to(dist.get_rank(), non_blocking=True)
 
+        if images.ndim > 4:
+            # Flatten frames dim with batch
+            images = images.view((-1, *images.shape[-3:]))
+            gt = gt.view((-1, *gt.shape[-2:]))
+
         loss = compute_loss(args=args,
                             model=model,
                             images=images,
@@ -302,6 +317,12 @@ def do_epoch(args: argparse.Namespace,
                         callback.scalar('lr', t, lr, title='Learning rate')
                         break
 
+                    denorm_img = denorm(images[0].cpu())
+                    lbl, colors = map_label(gt[0].cpu(), nclasses=args.num_classes_tr)
+                    pred, _ = map_label(torch.argmax(logits[0].cpu().detach(), dim=0), colors=colors)
+                    concat_img = np.expand_dims(np.concatenate((denorm_img, lbl, pred), axis=2), axis=0)
+                    callback.images('Train Sample', images=concat_img, title="Train Image Label Pairs")
+
                 train_losses[int(i / args.log_freq)] = loss_meter.avg
                 train_mIous[int(i / args.log_freq)] = mIoU
 
@@ -325,6 +346,7 @@ if __name__ == "__main__":
     distributed = world_size > 1
     args.distributed = distributed
     args.port = find_free_port()
+#    main_worker(0, world_size, args)
     mp.spawn(main_worker,
              args=(world_size, args),
              nprocs=world_size,

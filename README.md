@@ -69,15 +69,15 @@ VSPW/data
 
 * Or you can download processed data here:
 ```
-wget https://www.dropbox.com/s/th01g9niwvfd3re/vspw_data.zip?dl=0
+wget 
 ```
 
 ##### Download TAO Dataset
 * From their webpage, for HAVS and AVA you need to send them for request first then they send video urls
-* You can use this processed
-```
-wget 
-```
+* Its too huge to upload unfortunately
+
+##### Download YTVIS dataset
+* use 2019 YTVIS version similar to [DANet](https://github.com/scutpaul/DANet)
 
 #### About the train/val splits
 
@@ -89,7 +89,9 @@ The train/val splits are directly provided in lists/. How they were obtained is 
 First, you will need to download the ImageNet pre-trained backbones at https://drive.google.com/drive/folders/1Hrz1wOxOZm4nIIS7UMJeL79AQrdvpj6v and put them under initmodel/. These will be used if you decide to train your models from scratch.
 
 #### Pre-trained models
-We directly provide the full pre-trained models at https://drive.google.com/file/d/1iuMAo5cJ27oBdyDkUI0JyGIEH60Ln2zm/view?usp=sharing. You can download them and directly extract them at the root of this repo. This includes Resnet50 and Resnet101 backbones on Pascal-5i, and Resnet50 on Coco-20i.
+* For VSPW and TAO: use RePRI ones "directly provide the full pre-trained models at https://drive.google.com/file/d/1iuMAo5cJ27oBdyDkUI0JyGIEH60Ln2zm/view?usp=sharing. You can download them and directly extract them at the root of this repo. This includes Resnet50 and Resnet101 backbones on Pascal-5i, and Resnet50 on Coco-20i."
+
+* For YTVIS: use these provided [models]()
 
 ## Overview of the repo
 
@@ -124,6 +126,7 @@ Command:
 ```python
 bash scripts/test.sh taovos 1 [0] 50  # 1-shot TAO
 bash scripts/test.sh vspw 1 [0] 50  # 1-shot VSPW
+bash scripts/test.sh ytvis_episodic 1 [0] 50  # 1-shot Youtube-VIS
 ```
 
 ## Acknowledgments

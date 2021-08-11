@@ -111,6 +111,9 @@ class PSPNet(nn.Module):
                 nn.Dropout2d(p=args.dropout))
         self.classifier = nn.Conv2d(self.bottleneck_dim, args.num_classes_tr, kernel_size=1)
 
+    def set_feature_res(self, size):
+        self.feature_res = (int(np.ceil(size[0]/8.0)), int(np.ceil(size[1]/8.0)))
+
     def freeze_bn(self):
         for m in self.modules():
             if not isinstance(m, nn.BatchNorm2d):

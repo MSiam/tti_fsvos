@@ -27,7 +27,7 @@ TRAIN:
   batch_size: 12
   epochs: 100
   log_freq : 50
-  visdom_port: 28333
+  visdom_port: -1
   visdom_env: "repri"
   debug: False
   save_models: True
@@ -55,7 +55,7 @@ MODEL:
 
 EVALUATION:
   episodic_val: False
-  temporal_episodic_val: 1
+  temporal_episodic_val: 1 #0: None, 1: TAO, 2: VSPW, 3: YTVIS
   shot: 1
   random_shot: False
   norm_feat: True
@@ -67,6 +67,7 @@ EVALUATION:
   smoothing: True
   n_runs: 2
   save_oracle: False
+  eval_vc: False
 
 VISUALIZATION:
   visu: False

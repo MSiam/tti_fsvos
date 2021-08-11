@@ -2,6 +2,22 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+def correlation_based_consistency(f1, f2, p1, p2, valid, roi, h, w):
+#    m1 = p1.argmax(dim=0)
+#    m2 = p2.argmax(dim=0)
+
+    correlation = F.cosine_similarity(f1, f2, dim=0)
+    correlation = correlation * roi
+    peaks = correlation.argmax(dim=0)
+    xpeaks = (peaks % w).view(h,w)
+    ypeaks = torch.div(peaks, w, rounding_mode='floor').view(h,w)
+    # Sum over classes dimension (probabilities..) and avg on pixels
+#    loss_perpixel = (p2[:,ypeaks, xpeaks] * \
+#            torch.log(p2[:,ypeaks, xpeaks] / (p1 + 1e-10))).sum(0)
+    loss_perpixel = torch.abs((p2[:, ypeaks, xpeaks] - p1)).sum(0)
+    loss = (loss_perpixel * valid).sum() / (valid.sum() + 1e-10)
+    return loss
+
 def temporal_negative_steered_spatial(features, probas, valid_pixels, steering_protos):
     bg_probas = (1 - probas) * valid_pixels.unsqueeze(2)
 

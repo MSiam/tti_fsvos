@@ -23,7 +23,7 @@ import argparse
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.multiprocessing as mp
 import time
-from .visu import make_episode_visualization
+from .visu import make_episode_visualization, make_episode_visualization_cv2
 from typing import Tuple
 
 
@@ -86,7 +86,7 @@ def main_worker(rank: int,
         val_Iou /= world_size
         val_loss /= world_size
 
-    cleanup()
+    #cleanup()
 
 
 def episodic_validate(args: argparse.Namespace,
@@ -114,6 +114,13 @@ def episodic_validate(args: argparse.Namespace,
     val_Fscores = np.zeros(args.n_runs)
     val_VCs = np.zeros(args.n_runs)
     val_losses = np.zeros(args.n_runs)
+
+    if args.weights == [1, 'auto', 'auto', 0]:
+        method = "repri"
+    elif args.weights == [1, 'auto', 'auto', 'auto']:
+        method = "tti"
+    else:
+        raise NotImplementedError()
 
     # ========== Perform the runs  ==========
     for run in tqdm(range(args.n_runs)):
@@ -147,8 +154,8 @@ def episodic_validate(args: argparse.Namespace,
 
             # =========== Generate tasks and extract features for each task ===============
             with torch.no_grad():
-                all_sprt = {'imgs': [], 'masks': []}
-                all_qry = {'imgs': [], 'masks': [], 'flows': []}
+                all_sprt = {'imgs': [], 'masks': [], 'paths': []}
+                all_qry = {'imgs': [], 'masks': [], 'flows': [], 'paths': []}
 
                 queue = {'feat': [], 'flow': []}
                 time_window = 4
@@ -202,8 +209,10 @@ def episodic_validate(args: argparse.Namespace,
                     if args.visu:
                         all_sprt['imgs'].append(spprt_imgs[0].cpu().numpy())
                         all_sprt['masks'].append(s_label[0].cpu().numpy())
+                        all_sprt['paths'].append(sprt_paths[0])
                         all_qry['imgs'].append(qry_img[0].cpu().numpy())
                         all_qry['masks'].append(q_label[0].cpu().numpy())
+                        all_qry['paths'].append(paths[0])
                         if args.flow_aggregation:
                             all_qry['flows'].append(qry_flow[0].cpu().numpy())
 
@@ -278,20 +287,22 @@ def episodic_validate(args: argparse.Namespace,
             # ================== Visualization ==================
             if args.visu:
                 for i in range(args.batch_size_val):
-                    root = os.path.join('plots', 'episodes')
+                    root = os.path.join('plots', 'episodes', method)
                     os.makedirs(root, exist_ok=True)
                     save_path = os.path.join(root, f'run_{run}_episode_{e}_{i:05d}.png')
                     if args.flow_aggregation:
                         flow_q = all_qry['flows'][i]
                     else:
                         flow_q = None
-                    make_episode_visualization(img_s=all_sprt['imgs'][i],
-                                               img_q=all_qry['imgs'][i],
-                                               gt_s=all_sprt['masks'][i],
-                                               gt_q=all_qry['masks'][i],
-                                               preds=probas[i].cpu().numpy(),
-                                               save_path=save_path,
-                                               flow_q=flow_q)
+                    make_episode_visualization_cv2(img_s=all_sprt['imgs'][i],
+                                                   img_q=all_qry['imgs'][i],
+                                                   gt_s=all_sprt['masks'][i],
+                                                   gt_q=all_qry['masks'][i],
+                                                   path_s=all_sprt['paths'][i],
+                                                   path_q=all_qry['paths'][i],
+                                                   preds=probas[i].cpu().numpy(),
+                                                   save_path=save_path,
+                                                   flow_q=flow_q)
 
 
         runtimes[run] = runtime
@@ -344,6 +355,12 @@ def standard_validate(args: argparse.Namespace,
             images, gt = iterable_val_loader.next()
             images = images.to(dist.get_rank(), non_blocking=True)
             gt = gt.to(dist.get_rank(), non_blocking=True)
+
+            if images.ndim > 4:
+                # Flatten frames dim with batch
+                images = images.view((-1, *images.shape[-3:]))
+                gt = gt.view((-1, *gt.shape[-2:]))
+
             logits = model(images).detach()
             loss += loss_fn(logits, gt)
             intersection, union, _ = intersectionAndUnionGPU(logits.argmax(1),
