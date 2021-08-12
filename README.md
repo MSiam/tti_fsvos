@@ -106,7 +106,7 @@ Command:
 ```python
 bash scripts/test.sh taovos 1 [0] 50  # 1-shot TAO
 bash scripts/test.sh vspw 1 [0] 50  # 1-shot VSPW
-bash scripts/test.sh ytvis_episodic 1 [0] 50  # 1-shot Youtube-VIS
+bash scripts/test.sh ytvis_episodic 5 [0] 50  # 5-shot Youtube-VIS Is what the paper DANet is reporting
 ```
 
 ## Results
