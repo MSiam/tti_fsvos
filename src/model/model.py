@@ -1,9 +1,6 @@
 import torch.nn as nn
 
 from src.model.pspnet import PSPNet
-from src.model.fpn import ResFPN
-from src.model.transformer import TransformerNet
-from src.model.hsnet import HypercorrSqueezeNetwork
 
 def get_model(args) -> nn.Module:
     model_type = 'pspnet'

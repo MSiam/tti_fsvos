@@ -11,7 +11,7 @@ import json
 import os
 from torch.utils.data.dataloader import default_collate
 
-from src.dataset.temporal_dataset import TAOEpisodicTemporalData, VSPWEpisodicTemporalData
+from src.dataset.temporal_dataset import VSPWEpisodicTemporalData
 from src.dataset.static_dataset import StandardData, EpisodicData
 from src.dataset.ytvos_dataset import YTVOSStandard, YTVOSEpisodic
 from src.dataset.ytvos_transform import TrainTransform, TestTransform
@@ -164,11 +164,7 @@ def get_val_loader(args: argparse.Namespace, split_type: str='val') -> torch.uti
     if args.temporal_episodic_val > 0: ############# Episodic Temporal Datasets
         val_sampler = None
         if args.temporal_episodic_val == 1:
-            val_data = TAOEpisodicTemporalData(transform=val_transform,
-                                               class_list=class_list,
-                                               data_list_path=args.val_list,
-                                               args=args)
-
+            raise NotImplementedError()
         elif args.temporal_episodic_val == 2:
             val_data = VSPWEpisodicTemporalData(transform=val_transform,
                                                 class_list=class_list,

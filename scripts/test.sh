@@ -12,7 +12,7 @@ VCWINS="[3,5,7,9,11]"
 test_num=10000 # Used only by Pascal-to-MiniVSPW
 run=test
 
-if [ $DATA == "inference/ytvis"] || [ $DATA == "inference/minivspw2minivspw" ] 
+if [ $DATA == "inference/ytvis" ] || [ $DATA == "inference/minivspw2minivspw" ] 
 then
     run=test_nonbatched
     test_num=0
@@ -44,7 +44,7 @@ do
 							   layers ${LAYERS} \
 							   FB_param_update "[10]" \
 							   temperature 20.0 \
-							   adapt_iter ${ADAPT} \
+							   adapt_iter 50 \
 							   cls_lr 0.025 \
 							   gpus ${GPU} \
 							   test_num $test_num \

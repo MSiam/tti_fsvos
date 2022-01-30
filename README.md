@@ -23,12 +23,6 @@ pip install git+https://github.com/luizgh/visdom_logger.git
 
 ### Download data
 
-Instructions from RePRI
-
-#### All pre-processed from Google Drive
-
-We provide the versions of Pascal-VOC 2012 and MS-COCO 2017 used in this work at https://drive.google.com/file/d/1Lj-oBzBNUsAqA9y65BDrSQxirV8S15Rk/view?usp=sharing. You can download the full .zip and directly extract it at the root of this repo.
-
 #### Download MiniVSPW used in Pascal-to-MiniVSPW Data
 
 * Download Data from webpage
@@ -47,6 +41,9 @@ VSPW/data
 
 * Or you can download processed data [here](https://www.dropbox.com/s/a4gqqu0w4t834p2/MiniVSPW.zip?dl=0)
 
+* Instructions from RePRI for downloading processed Pascal Data.
+We provide the versions of Pascal-VOC 2012 and MS-COCO 2017 used in this work at https://drive.google.com/file/d/1Lj-oBzBNUsAqA9y65BDrSQxirV8S15Rk/view?usp=sharing. You can download the full .zip and directly extract it at the root of this repo.
+
 #### Download Full VSPW for MiniVSPW-to-MiniVSPW evaluation
 * use processed data from [VSPW_480](https://github.com/sssdddwww2/vspw_dataset_download)
 
@@ -60,14 +57,14 @@ The train/val splits are directly provided in lists/. How they were obtained is 
 ### Download pre-trained models
 
 #### Pre-trained backbones
-First, you will need to download the ImageNet pre-trained backbones at https://drive.google.com/drive/folders/1Hrz1wOxOZm4nIIS7UMJeL79AQrdvpj6v and put them under initmodel/. These will be used if you decide to train your models from scratch.
+First, you will need to download the ImageNet pre-trained backbones from RePRI at [here](https://drive.google.com/drive/folders/1Hrz1wOxOZm4nIIS7UMJeL79AQrdvpj6v) and put them under initmodel/. These will be used if you decide to train your models from scratch.
 
 #### Pre-trained models
 * For Pascal-to-MiniVSPW : use RePRI ones "directly provide the [full pre-trained models](https://drive.google.com/file/d/1iuMAo5cJ27oBdyDkUI0JyGIEH60Ln2zm/view?usp=sharing). You can download them and directly extract them at the root of this repo. This includes Resnet50 and Resnet101 backbones on Pascal-5i, and Resnet50 on Coco-20i."
 
 * For YTVIS: use these provided [models](https://www.dropbox.com/s/2q6vqnrkpjju0yc/model_ckpt_ytvis.zip?dl=0)
 * For YTVIS (with auxiliary DCL): use these provided [models](https://www.dropbox.com/s/qynq5lot2696ogm/model_ckpt_dcl.zip?dl=0)
-* For MiniVSPW-to-MiniVSPW: use these provided [models]()
+* For MiniVSPW-to-MiniVSPW: use these provided [models](https://www.dropbox.com/s/ymgzphqo4b5fddb/checkpoints_nminivspw.zip?dl=0)
 
 ## Overview of the repo
 

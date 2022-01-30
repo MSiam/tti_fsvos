@@ -8,8 +8,6 @@ import random
 from PIL import Image
 import src.dataset.ytvos_transform as transform
 import argparse
-
-from src.util import get_split_base_protos
 from src.dataset.aux_dataset import YTVOSAuxiliaryData
 
 class YTVOSBase(Dataset):
