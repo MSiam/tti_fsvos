@@ -25,7 +25,7 @@ Instructions from RePRI
 
 We provide the versions of Pascal-VOC 2012 and MS-COCO 2017 used in this work at https://drive.google.com/file/d/1Lj-oBzBNUsAqA9y65BDrSQxirV8S15Rk/view?usp=sharing. You can download the full .zip and directly extract it at the root of this repo.
 
-#### Download VSPW Data
+#### Download MiniVSPW used in Pascal-to-MiniVSPW Data
 
 * Download Data from webpage
 * expected folder structure
@@ -41,14 +41,10 @@ VSPW/data
 |    └── mask ....
 ```
 
-* Or you can download processed data here:
-```
-wget 
-```
+* Or you can download processed data [here](https://www.dropbox.com/s/a4gqqu0w4t834p2/MiniVSPW.zip?dl=0)
 
-##### Download TAO Dataset
-* From their webpage, for HAVS and AVA you need to send them for request first then they send video urls
-* Its too huge to upload unfortunately
+#### Download Full VSPW for MiniVSPW-to-MiniVSPW evaluation
+* use processed data from [VSPW_480](https://github.com/sssdddwww2/vspw_dataset_download)
 
 ##### Download YTVIS dataset
 * use 2019 YTVIS version similar to [DANet](https://github.com/scutpaul/DANet)
@@ -63,16 +59,22 @@ The train/val splits are directly provided in lists/. How they were obtained is 
 First, you will need to download the ImageNet pre-trained backbones at https://drive.google.com/drive/folders/1Hrz1wOxOZm4nIIS7UMJeL79AQrdvpj6v and put them under initmodel/. These will be used if you decide to train your models from scratch.
 
 #### Pre-trained models
-* For VSPW and TAO: use RePRI ones "directly provide the full pre-trained models at https://drive.google.com/file/d/1iuMAo5cJ27oBdyDkUI0JyGIEH60Ln2zm/view?usp=sharing. You can download them and directly extract them at the root of this repo. This includes Resnet50 and Resnet101 backbones on Pascal-5i, and Resnet50 on Coco-20i."
+* For Pascal-to-MiniVSPW : use RePRI ones "directly provide the [full pre-trained models](https://drive.google.com/file/d/1iuMAo5cJ27oBdyDkUI0JyGIEH60Ln2zm/view?usp=sharing). You can download them and directly extract them at the root of this repo. This includes Resnet50 and Resnet101 backbones on Pascal-5i, and Resnet50 on Coco-20i."
 
 * For YTVIS: use these provided [models](https://www.dropbox.com/s/2q6vqnrkpjju0yc/model_ckpt_ytvis.zip?dl=0)
+* For YTVIS (with auxiliary DCL): use these provided [models](https://www.dropbox.com/s/qynq5lot2696ogm/model_ckpt_dcl.zip?dl=0)
+* For MiniVSPW-to-MiniVSPW: use these provided [models]()
 
 ## Overview of the repo
 
 Data are located in data/. All the code is provided in src/. Default configuration files can be found in config_files/. Training and testing scripts are located in scripts/. Lists/ contains the train/validation splits for each dataset.
 
-
-## Training (optional)
+## Inference
+* Reproduce results for all tables
+```
+bash scripts/test_all_datasets.sh
+```
+## Training
 
 If you want to use the pre-trained models, this step is optional. Otherwise, you can train your own models from scratch with the scripts/train.sh script, as follows.
 
@@ -89,31 +91,10 @@ For training on ytvis standard training
 bash scripts/train.sh ytvis 0 [1] 50
 ```
 
-
 Note that this code supports distributed training. If you want to train on multiple GPUs, you may simply replace [1] in the previous examples with the list of gpus_id you want to use.
 
-
-## Testing
-
-To test your models, use the scripts/test.sh script, the general synthax is:
-```python
-bash scripts/test.sh {data} {shot} {[gpu_ids]} {layers}
-```
-This script will test successively on all folds of the current dataset. Below are presented specific commands for several experiments.
-
-
-Command:
-```python
-bash scripts/test.sh taovos 1 [0] 50  # 1-shot TAO
-bash scripts/test.sh vspw 1 [0] 50  # 1-shot VSPW
-bash scripts/test.sh ytvis_episodic 5 [0] 50  # 5-shot Youtube-VIS Is what the paper DANet is reporting
-```
-
-## Results
-
-The logs for the previous results and reproducing it is added under results_all_tao_vspw/ and results_reproduce_all/
 
 ## Acknowledgments
 
 We gratefully thank the authors of https://github.com/mboudiaf/RePRI-for-Few-Shot-Segmentation for building upon their code.
-
+We also rely on https://github.com/scutpaul/DANet, for understanding their Youtube-VIS episodic version.

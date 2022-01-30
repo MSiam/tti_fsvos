@@ -74,8 +74,8 @@ EVALUATION:
 VISUALIZATION:
   visu: False
   vis_dir: /local/data0/ytvis_vspw_plots/
-  analysis_dir: 'analysis_ytvis_episodic/'
-
+  vis_dir: /local/data0/plots/
+  analysis_dir: 'analysis/'
 
 CLASSIFIER:
   distance: cos
@@ -90,7 +90,7 @@ CLASSIFIER:
   tloss_type: [temporal_repri, pos_neg_steer_avg]
   cls_visdom_freq: 5
   single_proto_flag: False
-  refine_keyframes_ftune: False
+  refine_keyframes_ftune: True
   refine_iter: 10
   refine_oracle: False
 

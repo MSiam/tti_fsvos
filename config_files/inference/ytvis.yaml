@@ -56,7 +56,6 @@ MODEL:
   m_scale: False
   layers: 50
   bottleneck_dim: 512
-  flow_aggregation: False
 
 EVALUATION:
   episodic_val: False
@@ -80,8 +79,8 @@ EVALUATION:
 
 VISUALIZATION:
   visu: False
-  vis_dir: /local/data0/ytvis_plots_repaired/
-  analysis_dir: 'analysis_ytvis_episodic/'
+  vis_dir: /local/data0/plots/
+  analysis_dir: 'analysis/'
   visu_keyframes: False
 
 CLASSIFIER:
@@ -95,12 +94,13 @@ CLASSIFIER:
   scl_temperature: 0.1
   nviews: 2
   tloss_type: [temporal_repri, pos_neg_steer_avg]
-  consistency_type: rnd_forward
   temporal_window: 3
   temporal_step: 1
   cls_visdom_freq: 5
   single_proto_flag: False
-  refine_keyframes_ftune: False
+  refine_keyframes_ftune: True
+  refine_iter: 10
+  refine_oracle: False
 
 DISTRIBUTED:
   gpus: [0]

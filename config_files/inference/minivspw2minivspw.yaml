@@ -54,7 +54,6 @@ MODEL:
   m_scale: False
   layers: 50
   bottleneck_dim: 512
-  flow_aggregation: False
 
 EVALUATION:
   episodic_val: False
@@ -73,10 +72,13 @@ EVALUATION:
   test_num: 0
   vc_wins: [15]
   vc_size_th: 0
+  selected_weights: []
 
 VISUALIZATION:
   visu: False
   visu_keyframes: False
+  vis_dir: /local/data0/plots/
+  analysis_dir: 'analysis/'
 
 CLASSIFIER:
   distance: cos
@@ -93,12 +95,9 @@ CLASSIFIER:
   temporal_window: 3
   temporal_step: 1
   cls_visdom_freq: 5
-  refine_keyframes_ftune: False
+  refine_keyframes_ftune: True
+  refine_iter: 10
+  refine_oracle: False
 
 DISTRIBUTED:
   gpus: [0]
-
-WANDB:
-  wandb_user: 'yvv'
-  wandb_project: 'tfss'
-  wandb_run_name: ''
