@@ -1,5 +1,9 @@
 # Temporal Transductive Inference for Few-shot Video Semantic Segmentation
 
+<div align="center">
+<img src="" width="70%" height="70%"><br><br>
+</div>
+
 ## Getting Started
 
 ### Minimum requirements
