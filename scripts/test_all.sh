@@ -1,13 +1,15 @@
-# For TAO , TTI weights = 2.0, Need to rerun with auto didnt eval yet
-# For VSPW , TTI weight = 2 degraded results, with auto it improved over the baseline.
-
 DATA=$1
 GPU=$2
+CKPT=$3
+REFINE=$4 # Flag to perform keyframe finetuning
+MULTISPRT=$5
 
 SPLITS="0 1 2 3"
-METHODS="tti"
+METHODS="repri tti"
 SHOTS="1 5"
-ARCHS="50 101"
+ARCHS="50"
+VCWINS="[3,5,7,9,11]"
+TESTNUM="10000"
 
 for LAYERS in $ARCHS
 do
@@ -23,7 +25,7 @@ do
         then
            bsz_val="20"
         fi
-
+        
         for METHOD in $METHODS
         do
             if [[ "$METHOD" == "ftune" ]]; then
@@ -50,10 +52,14 @@ do
                                            adapt_iter 50 \
                                            cls_lr 0.025 \
                                            gpus ${GPU} \
-                                           test_num 1000 \
+                                           test_num ${TESTNUM} \
                                            n_runs 5 \
                                            weights $WEIGHTS \
                                            workers 0 \
+                                           vc_wins ${VCWINS} \
+                                           ckpt_path ${CKPT} \
+                                           refine_keyframes_ftune ${REFINE} \
+                                           multi_rnd_sprt ${MULTISPRT} \
                                            | tee ${dirname}/log_${PI}.txt
             done
         done

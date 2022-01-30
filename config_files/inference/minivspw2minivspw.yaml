@@ -22,6 +22,7 @@ DATA:
   rot_max: 10
   augmentations: ['hor_flip', 'vert_flip', 'resize']
   sprtset_as_frames: False
+  multi_rnd_sprt: False # Flag only used for YTVIS
 
 TRAIN:
   ckpt_path: checkpoints/
@@ -86,7 +87,6 @@ CLASSIFIER:
   adapt_iter: 50
   FB_param_type: soft
   weights: [1.0, 'auto', 'auto', 'auto']  #  [0.5, 1.0, 0.1]
-  selected_weights: [1.0, 'auto', 'auto', 0.0]
   cls_lr: 0.025
   FB_param_update: [10]
   scl_temperature: 0.1
