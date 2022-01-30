@@ -26,6 +26,7 @@ TRAIN:
   epochs: 100
   log_freq : 50
   visdom_port: -1
+  visdom_env: ""
   debug: False
   save_models: True
   lr: 0.0025
@@ -51,7 +52,7 @@ MODEL:
   flow_aggregation: False
 
 EVALUATION:
-  episodic_val: True
+  episodic_val: False
   temporal_episodic_val: 0
   shot: 1
   random_shot: False

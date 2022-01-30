@@ -23,7 +23,7 @@ DATA:
   augmentations: ['hor_flip', 'vert_flip', 'resize']
 
 TRAIN:
-  ckpt_path: checkpoints/
+  ckpt_path: model_ckpt/
   batch_size: 12
   epochs: 100
   log_freq : 50
@@ -68,9 +68,14 @@ EVALUATION:
   n_runs: 2
   save_oracle: False
   eval_vc: True
+  vc_size_th: 0
+  vc_wins: [3]
 
 VISUALIZATION:
   visu: False
+  vis_dir: /local/data0/ytvis_vspw_plots/
+  analysis_dir: 'analysis_ytvis_episodic/'
+
 
 CLASSIFIER:
   distance: cos
@@ -84,6 +89,10 @@ CLASSIFIER:
   nviews: 2
   tloss_type: [temporal_repri, pos_neg_steer_avg]
   cls_visdom_freq: 5
+  single_proto_flag: False
+  refine_keyframes_ftune: False
+  refine_iter: 10
+  refine_oracle: False
 
 DISTRIBUTED:
   gpus: [0]

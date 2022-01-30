@@ -24,10 +24,10 @@ DATA:
   rot_min: None
   rot_max: None
   augmentations: []
-  multi_rnd_sprt: False
+  multi_rnd_sprt: False # YTVIS V1: False, YTVIS V2: True (More stable)
 
 TRAIN:
-  ckpt_path: checkpoints_intermfeats_newpairs/
+  ckpt_path: checkpoints/
   resume_training: False
   batch_size: 7
   epochs: 100
