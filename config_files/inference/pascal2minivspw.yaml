@@ -52,7 +52,6 @@ MODEL:
   m_scale: False
   layers: 50
   bottleneck_dim: 512
-  flow_aggregation: False
 
 EVALUATION:
   episodic_val: False

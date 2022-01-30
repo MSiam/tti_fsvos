@@ -128,14 +128,6 @@ class YTVOSStandard(YTVOSBase):
                                     for i, cls in enumerate(self.class_list)}
         self.class_colors = {i+1: np.random.random((1,3))*255 for i in range(len(self.class_list))}
 
-        self.conditioned = False if not hasattr(args, 'conditioned') else args.conditioned
-
-        if self.conditioned:
-            print("=====> Loading Base Prototypes")
-            self.base_protos = get_split_base_protos(self.train_list)
-            assert len(self.base_protos) == args.num_classes_tr, "Wrong base prototypes length used in conditioning"
-
-
     def __getitem__(self, idx):
         vid = self.combined_video_ids[idx%len(self.combined_video_ids)]
         frames, masks = self.get_frames_labels(vid)
@@ -149,16 +141,6 @@ class YTVOSStandard(YTVOSBase):
             frames = {'aux_images': aux_frames, 'images': frames}
             masks = {'aux_labels': aux_labels, 'labels': masks}
 
-        if self.conditioned:
-            frames_protos = []
-            for f_idx in range(masks.shape[0]):
-                frame_protos = []
-                f_classes = torch.unique(masks[f_idx])
-                for cls in f_classes:
-                    frame_protos.append(self.base_protos[int(cls)])
-                frames_protos.append(torch.stack(frame_protos))
-
-            frames = {'rgb': frames, 'protos': frames_protos}
         return frames, masks, self.use_aux
 
     def get_frames_labels(self, vid):

@@ -8,8 +8,7 @@ from collections import defaultdict
 from typing import Tuple
 from visdom_logger import VisdomLogger
 import numpy as np
-from src.losses.temporal_losses import temporal_positive, temporal_contrastive, \
-        temporal_positive_steered, temporal_negative_steered_spatial, correlation_based_consistency
+from src.losses.temporal_losses import temporal_positive_steered, temporal_negative_steered_spatial
 from scipy.ndimage.morphology import distance_transform_edt, grey_erosion
 import cv2
 

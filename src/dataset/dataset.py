@@ -89,8 +89,6 @@ def get_train_loader(args: argparse.Namespace,
 
     if hasattr(args, 'aux_train_name') and not hasattr(args, 'pretrain_cl'):
         collate_fn = collate_aux_labelled_images
-    elif hasattr(args, 'conditioned') and args.conditioned:
-        collate_fn = collate_protos_labelled_images
 
     if args.distributed:
         world_size = torch.distributed.get_world_size()
@@ -110,19 +108,6 @@ def get_train_loader(args: argparse.Namespace,
                                                collate_fn=collate_fn)
     print('#############################', len(train_loader), ' ', batch_size, ' ', len(train_data))
     return train_loader, train_sampler
-
-def collate_protos_labelled_images(batch):
-    images = {'rgb': [], 'protos': []}
-    labels = []
-    protos = []
-
-    for img, gt, aux_flag in batch:
-        images['rgb'].append(img['rgb'])
-        images['protos'].append(img['protos'])
-        labels.append(gt)
-    labels = torch.stack(labels)
-    images['rgb'] = torch.stack(images['rgb'])
-    return images, labels, [False]
 
 def collate_aux_labelled_images(batch):
     aux_images = []
@@ -253,9 +238,6 @@ def get_val_loader(args: argparse.Namespace, split_type: str='val') -> torch.uti
         workers = 1 if args.workers > 0 else args.workers
 
         collate_fn = default_collate
-        if hasattr(args, 'conditioned') and args.conditioned:
-            collate_fn = collate_protos_labelled_images
-
         val_loader = torch.utils.data.DataLoader(val_data,
                                                  batch_size=batch_size,
                                                  shuffle=False,

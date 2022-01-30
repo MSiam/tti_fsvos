@@ -33,8 +33,6 @@ class EpisodicTemporalData(EpisodicData):
         self.sequence_support = None
         self.class_chosen = None
 
-        self.flow_aggregation = args.flow_aggregation
-
     def _load_class_mapping(self, class_mapping_file):
         with open(class_mapping_file, "r") as f:
             class_mapping = json.load(f)
@@ -49,8 +47,6 @@ class EpisodicTemporalData(EpisodicData):
         # ================== Load Query ========================
         image, image_path, pick_new_support = self._load_image(image_id)
         label_class, label = self._get_label(image_id, image.shape)
-        if self.flow_aggregation:
-            flow, flow_path = self._load_flow(image_id)
 
         if pick_new_support:
             self.class_chosen = np.random.choice(label_class)
@@ -66,11 +62,7 @@ class EpisodicTemporalData(EpisodicData):
 
             # == Forward images through transforms =================
             if self.transform is not None:
-                if self.flow_aggregation:
-                    qry_img, target, qry_flow = self.transform(image, label, flow)
-                    qry_img = {'image': qry_img, 'flow': qry_flow}
-                else:
-                    qry_img, target = self.transform(image, label)
+                qry_img, target = self.transform(image, label)
                 for k in range(shot):
                     support_image_list[k], support_label_list[k] = self.transform(support_image_list[k], support_label_list[k])
                     support_image_list[k] = support_image_list[k].unsqueeze(0)
@@ -83,11 +75,7 @@ class EpisodicTemporalData(EpisodicData):
             self.sequence_support = (spprt_imgs, spprt_labels, subcls_list, support_image_path_list)
         else:
             if self.transform is not None:
-                if self.flow_aggregation:
-                    qry_img, target, qry_flow = self.transform(image, label, flow)
-                    qry_img = {'image': qry_img, 'flow': qry_flow}
-                else:
-                    qry_img, target = self.transform(image, label)
+                qry_img, target = self.transform(image, label)
 
             spprt_imgs, spprt_labels, subcls_list, support_image_path_list = self.sequence_support
 
