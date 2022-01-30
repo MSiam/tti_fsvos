@@ -3,15 +3,15 @@ import torch
 import torch.nn.functional as F
 from src.util import batch_intersectionAndUnionGPU
 from typing import List
-from .util import to_one_hot
+from .util import to_one_hot, compute_map, create_pseudogt
 from collections import defaultdict
 from typing import Tuple
 from visdom_logger import VisdomLogger
 import numpy as np
 from src.losses.temporal_losses import temporal_positive, temporal_contrastive, \
         temporal_positive_steered, temporal_negative_steered_spatial, correlation_based_consistency
-from src.losses.supconloss import SupConLoss
 from scipy.ndimage.morphology import distance_transform_edt, grey_erosion
+import cv2
 
 class Classifier(object):
     def __init__(self, args):
@@ -24,9 +24,26 @@ class Classifier(object):
         self.visdom_freq = args.cls_visdom_freq
         self.FB_param_type = args.FB_param_type
         self.FB_param_noise = args.FB_param_noise
-        if hasattr(args, 'scl_temperature'):
-            scl_temperature = args.scl_temperature
-            self.supconloss = SupConLoss(temperature=scl_temperature, base_temperature=scl_temperature)
+
+        self.single_proto_flag = args.single_proto_flag if hasattr(args, 'single_proto_flag') else False
+
+        if hasattr(args, 'temporal_window'):
+            self.temporal_window = args.temporal_window
+        else:
+            self.temporal_window = 3
+
+        if hasattr(args, 'temporal_step'):
+            if args.temporal_step == -1:
+                self.temporal_step = self.temporal_window
+            else:
+                self.temporal_step = args.temporal_step
+        else:
+            self.temporal_step = 1
+
+        self.keyframe_criteria = 'keyframe_sprt'
+        if hasattr(args, 'keyframe_criteria'):
+            self.keyframe_criteria = args.keyframe_criteria
+
         if hasattr(args, 'nviews'):
             self.nviews = args.nviews
 
@@ -36,10 +53,11 @@ class Classifier(object):
             self.tloss_type = None
 
         self.enable_temporal = False
+        self.refine_iter = args.refine_iter if hasattr(args, 'refine_iter') else -1
 
     def init_prototypes(self, features_s: torch.tensor, features_q: torch.tensor,
                         gt_s: torch.tensor, gt_q: torch.tensor, subcls: List[int],
-                        callback) -> None:
+                        callback, seqs: List[str]) -> None:
         """
         inputs:
             features_s : shape [n_task, shot, c, h, w]
@@ -61,18 +79,31 @@ class Classifier(object):
         fg_mask = (ds_gt_s == 1)
         fg_prototype = (features_s * fg_mask).sum(dim=(1, 3, 4))
         fg_prototype /= (fg_mask.sum(dim=(1, 3, 4)) + 1e-10)  # [n_task, c]
-        self.prototype = fg_prototype
+        if self.single_proto_flag:
+            unique_seqs = np.unique(seqs)
+            n_seqs = len(unique_seqs)
+            self.prototype = []
+            for seq in unique_seqs:
+                self.prototype.append(
+                        fg_prototype[np.where(seqs==seq)[0][0]]
+                )
+            self.prototype = torch.stack(self.prototype)
+            proto_size = n_seqs
+        else:
+            self.prototype = fg_prototype
+            proto_size = n_task
 
-        logits_q = self.get_logits(features_q)  # [n_tasks, shot, h, w]
+        logits_q = self.get_logits(features_q, seqs=seqs)  # [n_tasks, shot, h, w]
         self.bias = logits_q.mean(dim=(1, 2, 3))
 
-        assert self.prototype.size() == (n_task, c), self.prototype.size()
+        assert self.prototype.size() == (proto_size, c), self.prototype.size()
         assert torch.isnan(self.prototype).sum() == 0, self.prototype
 
         if callback is not None:
-            self.update_callback(callback, 0, features_s, features_q, subcls, gt_s, gt_q)
+            self.update_callback(callback, 0, features_s, features_q, subcls, gt_s, gt_q, seqs=seqs)
 
-    def get_logits(self, features: torch.tensor, ext_prototype=None) -> torch.tensor:
+    def get_logits(self, features: torch.tensor, ext_prototype: torch.tensor=None,
+            seqs: List[str]=None, selected_seq: str = None) -> torch.tensor:
 
         """
         Computes the cosine similarity between self.prototype and given features
@@ -85,11 +116,21 @@ class Classifier(object):
 
         # Put prototypes and features in the right shape for multiplication
         features = features.permute((0, 1, 3, 4, 2))  # [n_task, shot, h, w, c]
-        if ext_prototype is None:
-            prototype = self.prototype.unsqueeze(1).unsqueeze(2)  # [n_tasks, 1, 1, c]
+        if self.single_proto_flag:
+            # Broadcast unique prototypes to different seq frames
+            unique_seqs = np.unique(seqs)
+            prototype = torch.zeros(features.shape[0], 1, 1, features.shape[-1]).cuda()
+            for i, seq in enumerate(unique_seqs):
+                prototype[np.where(seqs==seq)[0]] = self.prototype[i]
         else:
-            # Use it for temporal sequence same sprt set over all frames
-            prototype = ext_prototype.unsqueeze(1).unsqueeze(2)  # [n_tasks, 1, 1, c]
+            if ext_prototype is None:
+                prototype = self.prototype.unsqueeze(1).unsqueeze(2)  # [n_tasks, 1, 1, c]
+                if selected_seq is not None:
+                    prototype = prototype[seqs == selected_seq]
+
+            else:
+                # Use it for temporal sequence same sprt set over all frames
+                prototype = ext_prototype.unsqueeze(1).unsqueeze(2)  # [n_tasks, 1, 1, c]
 
         # Compute cosine similarity
         cossim = features.matmul(prototype.unsqueeze(4)).squeeze(4)  # [n_task, shot, h, w]
@@ -98,7 +139,7 @@ class Classifier(object):
 
         return self.temperature * cossim
 
-    def get_probas(self, logits: torch.tensor) -> torch.tensor:
+    def get_probas(self, logits: torch.tensor, seqs: List[str]=None, selected_seq: str=None) -> torch.tensor:
         """
         inputs:
             logits : shape [n_tasks, shot, h, w]
@@ -106,13 +147,17 @@ class Classifier(object):
         returns :
             probas : shape [n_tasks, shot, num_classes, h, w]
         """
-        logits_fg = logits - self.bias.unsqueeze(1).unsqueeze(2).unsqueeze(3)  # [n_tasks, shot, h, w]
+        bias = self.bias.unsqueeze(1).unsqueeze(2).unsqueeze(3)
+        if selected_seq is not None:
+            bias = bias[seqs == selected_seq]
+
+        logits_fg = logits - bias # [n_tasks, shot, h, w]
         probas_fg = torch.sigmoid(logits_fg).unsqueeze(2)
         probas_bg = 1 - probas_fg
         probas = torch.cat([probas_bg, probas_fg], dim=2)
         return probas
 
-    def compute_FB_param(self, features_q: torch.tensor, gt_q: torch.tensor) -> torch.tensor:
+    def compute_FB_param(self, features_q: torch.tensor, gt_q: torch.tensor, seqs: List[str]) -> torch.tensor:
         """
         inputs:
             features_q : shape [n_tasks, shot, c, h, w]
@@ -140,8 +185,9 @@ class Classifier(object):
                 self.FB_param = perturbed_FB_param
 
         else:
-            logits_q = self.get_logits(features_q)
+            logits_q = self.get_logits(features_q, seqs=seqs)
             probas = self.get_probas(logits_q).detach()
+
             self.FB_param = (valid_pixels * probas).sum(dim=(1, 3, 4))
             self.FB_param /= valid_pixels.sum(dim=(1, 3, 4))
 
@@ -200,9 +246,11 @@ class Classifier(object):
         updates :
              ce : Cross-Entropy between one_hot_gt and probas, shape [n_tasks,]
         """
-        ce = - ((valid_pixels.unsqueeze(2) * (one_hot_gt * torch.log(probas + 1e-10))).sum(2))  # [n_tasks, shot, h, w]
+        ce = - ((valid_pixels.unsqueeze(2) * (one_hot_gt * torch.log(probas + 1e-10))).sum(2))
+
         ce = ce.sum(dim=(1, 2, 3))  # [n_tasks]
         ce /= valid_pixels.sum(dim=(1, 2, 3))
+
         if reduction == 'sum':
             ce = ce.sum(0)
         elif reduction == 'mean':
@@ -235,7 +283,7 @@ class Classifier(object):
 
         marginal = (valid_pixels.unsqueeze(2) * probas).sum(dim=(1, 3, 4))
         marginal /= valid_pixels.sum(dim=(1, 2, 3)).unsqueeze(1)
-        window = 3
+        window = self.temporal_window
         if marginal.shape[0] < window:
             return loss
 
@@ -244,7 +292,7 @@ class Classifier(object):
                 (seq_names_[0] == seq_names_[1]) * (seq_names_[0] == seq_names_[2])
         ).long().cuda()
 
-        marginal_window = marginal.unfold(0, window, 1)
+        marginal_window = marginal.unfold(0, window, self.temporal_step)
         margin = 0.0
         loss[:marginal_window.shape[0]] = seq_flags * F.relu(torch.abs(\
                 marginal_window.unsqueeze(3) - marginal_window.unsqueeze(2)) -margin).sum(1).mean(dim=[1,2])
@@ -258,8 +306,6 @@ class Classifier(object):
                           steering_features: torch.tensor,
                           steering_val_pixels: torch.tensor,
                           steering_mask: torch.tensor,
-                          roi_grid: torch.tensor = None,
-                          consistency_type: str = '',
                           reduction: str = 'none'):
         """
         Compute temporal consistency loss as a regularizer
@@ -275,58 +321,22 @@ class Classifier(object):
         if type(self.tloss_type) != list:
             self.tloss_type = [self.tloss_type]
 
+        seq_names = np.array(seq_names)
         total_loss = torch.zeros(features.shape[0]).cuda()
         for loss_ in self.tloss_type:
-            if loss_ == 'pos_steer':
-                # 0- Extract MAP Features on Support set
-                steering_mask = steering_mask[:, :, 1:] # Access Foreground Mask
-                steering_mask = steering_mask * steering_val_pixels.unsqueeze(2)
-                steering_protos = (steering_features * steering_mask).sum(dim=(1, 3, 4))
-                steering_protos /= (steering_mask.sum(dim=(1, 3, 4)) + 1e-10)
-                steering_protos = F.normalize(steering_protos, dim=1)
+            if loss_ == 'pos_neg_steer_avg':
+                # 1- Extract Query Signatures MAP Features with Prob maps
+                protos = compute_map(probas, valid_pixels, features)
 
-            if loss_ in ['pos', 'pos_steer', 'pos_steer_avg',
-                                   'pos_neg_steer_avg', 'contrastive']:
-                # 1- Extract MAP Features with Prob maps
-                probas = probas[:, :, 1:] # Access Foreground
-                valid_probas = probas * valid_pixels.unsqueeze(2)
-                protos = (features * valid_probas).sum(dim=(1, 3, 4))
-                protos /= (probas.sum(dim=(1, 3, 4)) + 1e-10)
-                protos = F.normalize(protos, dim=1)
+                # 2- Extract Global Prototype
+                avg_protos = self._extract_temporal_protos(seq_names)
 
-            # 2- Compute consistency among same sequence
-            seq_names = np.array(seq_names)
-            if loss_ == 'pos':
-                loss = temporal_positive(protos, seq_names)
-            elif loss_ == 'pos_steer':
-                loss = temporal_positive_steered(protos, seq_names, steering_protos)
-            elif loss_ == 'pos_steer_avg':
-                avg_protos = self._extract_temporal_protos(seq_names)
-                loss = temporal_positive_steered(protos, seq_names, avg_protos)
-            elif loss_ == 'pos_neg_steer_avg':
-                avg_protos = self._extract_temporal_protos(seq_names)
+                # 3- Compute Global Loss
                 pos_loss = temporal_positive_steered(protos, seq_names, avg_protos)
                 neg_loss = temporal_negative_steered_spatial(features, probas, valid_pixels, avg_protos)
                 loss = pos_loss + neg_loss
-            elif loss_ == 'spatial_pos_steer':
-                avg_protos = self._extract_temporal_protos(seq_names)
-                logits = self.get_logits(features, ext_prototype=avg_prototype)
-                probas = self.get_probas(logits)
-                d_kl, cond_entropy, _ = self.get_entropies(valid_pixels_q,
-                                                            probas,
-                                                            reduction='none')
-                loss = d_kl + cond_entropy
-            elif loss_ == 'contrastive':
-                loss = temporal_contrastive(protos, seq_names, self.nviews, self.supconloss)
-            elif loss_ == 'fb_consistency':
-                loss = self.enforce_fb_consistency(features, probas, seq_names, valid_pixels,
-                                                   roi_grid, consistency_type)
-            elif loss_ == 'ftune_pseudogt':
-                loss = self.ftune_pseudogt(features, probas, seq_names, valid_pixels)
-            elif loss_ == 'ftune_pseudogt_disttransform':
-                loss = self.ftune_pseudogt(features, probas, seq_names, valid_pixels,
-                                           disttransform=True)
             elif loss_ == 'temporal_repri':
+                # Compute Local Loss
                 loss = self.temporal_repri(probas, valid_pixels, seq_names)
 
             total_loss += loss
@@ -336,101 +346,74 @@ class Classifier(object):
 
         return total_loss
 
-    def ftune_pseudogt(self, features: torch.tensor, probas: torch.tensor,
-                       seq_names: List[str], valid_pixels: torch.tensor,
-                       disttransform: bool = False):
-
-        masks = probas[:1].argmax(dim=2)
-        valid_pixels = valid_pixels[:1]
-
-        if disttransform:
-            new_masks = torch.ones(masks.shape).cuda() * 255
-            new_valid_pixels = torch.ones(valid_pixels.shape).cuda()
-            new_valid_pixels[valid_pixels==0] = 0
-
-            # Create distance transform to create pseudo gt with ignore pixels around boundary
-            # To avoid propagation of errors
-            erosion_size = 3
-            pos_th = 0.8
-            h, w = features.shape[-2:]
-            neg_th = 0.25 * np.sqrt(h**2+w**2)
-
-            eroded_mask = grey_erosion(masks.cpu(), size=(1,1,erosion_size, erosion_size))
-            # Compute distance transform
-            dt = distance_transform_edt(np.logical_not(eroded_mask))
-
-            positives = probas[0,:,1:] > pos_th
-            negatives = torch.tensor(dt > neg_th)
-            new_masks[positives] = 1
-            new_masks[negatives] = 0
-            new_valid_pixels[new_masks==255] = 0
-            new_masks[new_masks==255] = 0
-            masks = new_masks.long()
-            valid_pixels = new_valid_pixels
-
-        # Ftune with first frame
-        one_hot_gt_pseudo = to_one_hot(masks, self.num_classes).repeat( \
-                                           features.shape[0], 1 , 1, 1, 1)
-        valid_pixels = valid_pixels[0].repeat(features.shape[0], 1, 1, 1)
-
-        feats = features[:1].repeat(features.shape[0], 1, 1, 1, 1)
-        logits = self.get_logits(feats)
-        q_probas = self.get_probas(logits)
-
-        ce = self.get_ce(q_probas, valid_pixels, one_hot_gt_pseudo, reduction='none')
-        return ce
-
-    def enforce_fb_consistency(self, features: torch.tensor, probas: torch.tensor,
-                               seq_names: List[str], valid_pixels: torch.tensor,
-                               roi_grid: torch.tensor, consistency_type='forward'):
+    def ftune_selected_keyframe(self, all_probas: torch.tensor, all_f_q: torch.tensor, all_f_s: torch.tensor,
+            all_gt_s: torch.tensor, all_gt_q: torch.tensor, seqs: List[str], refine_oracle: bool = False):
         """
-        Enforce forward backward consistency of the predictions
-        features: query features [n_tasks x 1 x C x H x W]
-        probas: probabilities [n_tasks x 1 x 2 x H x W]
-        seq_names: array of sequence names [n_tasks]
-        valid_pixels: flag of 1 indicate valid pixel, ignore otherwise [n_tasks x 1 x H x W]
-        roi_grid: Grid used to determine region of interest [HW x HW]
+        Finetune Based on KeyFrames in the sequence
         """
-        assert len(np.unique(seq_names)) == 1, "Not implemented yet to VSPW/TAO Only YTVIS Episodes"
-        loss = 0
-        h, w = features.shape[-2:]
-        # Remove dimension for # Query images per task (currently is just 1)
-        features = features.detach().squeeze(1)
-        probas = probas = probas.squeeze(1)
-        valid_pixels = valid_pixels.squeeze(1)
+        seqs = np.array(seqs)
+        for seq in np.unique(seqs):
+            gt_q = all_gt_q[seqs == seq]
+            gt_s = all_gt_s[seqs == seq]
+            probas = all_probas[seqs == seq]
+            f_q = all_f_q[seqs == seq]
+            f_s = all_f_s[seqs == seq]
 
-        # TODO: Check why one sequence is only 1 frame?
-        if features.shape[0] < 3:
-            return torch.tensor([0]).cuda()
+            # TODO: Currently seqs not used Thus this method will only work on YTVIS
+            ds_gt_q = F.interpolate(gt_q.float(), size=f_s.size()[-2:], mode='nearest').long()
+            ds_gt_s = F.interpolate(gt_s.float(), size=f_s.size()[-2:], mode='nearest').long()
+            ds_probas = F.interpolate(probas[:,0], size=f_s.size()[-2:], mode='nearest').unsqueeze(1)
 
-        # Compute over pairs of frames
-        skip = 2
-        if "rnd" in consistency_type:
-            n = int(0.1 * features.shape[0])
-            rnd_idcs = torch.randint(0, features.shape[0]-skip, [n])
-            consistency_type = consistency_type.replace('rnd_', '')
-        else:
-            n = features.shape[0] - 11
-            rnd_idcs = torch.arange(1, features.shape[0]-skip)
+            val_q_pixels = (ds_gt_q != 255).float()
+            val_s_pixels = (ds_gt_s != 255).float()
 
-        features = features.view(*features.shape[:2], -1)
-        for i in range(n):
-            # Forward Consistency based on Correlation HW x HW
-            idx = rnd_idcs[i]
-            if consistency_type in ["forward", "forback"]:
-                #next_idx = int(torch.randint(int(idx), features.shape[0]-1, (1,)))
-                next_idx = idx + skip
-                loss += correlation_based_consistency(features[idx].unsqueeze(1), features[next_idx].unsqueeze(2),
-                                                      probas[idx], probas[next_idx], valid_pixels[idx], roi_grid, h, w)
-            if consistency_type in ["backward", "forback"]:
-                back_idx = idx - skip
-                loss += correlation_based_consistency(features[back_idx].unsqueeze(1), features[idx].unsqueeze(2),
-                                                      probas[back_idx], probas[idx], valid_pixels[idx], roi_grid, h, w)
-            if consistency_type not in ["forward", "backward", "forback"]:
-                raise NotImplementedError()
-        return loss
+            ds_probas = torch.argmax(ds_probas, dim=2)
+            ds_probas_one_hot = to_one_hot(ds_probas, 2)
 
-    def RePRI(self,
+            protos = compute_map(ds_probas_one_hot, val_q_pixels, f_q)
+            one_hot_gt_s = to_one_hot(ds_gt_s, 2)
+            if self.keyframe_criteria == 'keyframe_sprt':
+                ref_protos = compute_map(one_hot_gt_s, val_s_pixels, f_s)
+            elif self.keyframe_criteria == 'keyframe_global':
+                ref_protos = self._extract_temporal_protos(seqs)
+                ref_protos = ref_protos[np.where(seqs == seq)]
+
+            cossim = F.cosine_similarity(ref_protos, protos, dim=1)
+            keyframe_indx = torch.argmax(cossim)
+
+            Nframes = f_q.shape[0]
+            ######## For debugging purposes only confirm its learning with real gt of keyframe as upper bound
+            val_q_pixels = F.interpolate(val_q_pixels, gt_q.shape[-2:])
+            if refine_oracle:
+                print('===> Refining with Oracle ================ ')
+                pseudogt_keyframe = gt_q[keyframe_indx].unsqueeze(0).repeat(Nframes, 1, 1, 1)
+                val_q_pixels = val_q_pixels * (pseudogt_keyframe != 255).float()
+                pseudogt_keyframe = to_one_hot(pseudogt_keyframe, 2)
+            else:
+                pseudogt_keyframe = create_pseudogt(probas[keyframe_indx].unsqueeze(0))
+                val_q_pixels = val_q_pixels * (pseudogt_keyframe != 255).float()
+
+                pseudogt_keyframe = to_one_hot(pseudogt_keyframe, 2)
+                pseudogt_keyframe = pseudogt_keyframe.repeat(Nframes, 1, 1, 1, 1)
+            keyframe_f_q = f_q[keyframe_indx].unsqueeze(0).repeat(Nframes, 1, 1, 1, 1)
+
+            optimizer = torch.optim.SGD([self.prototype, self.bias], lr=self.lr/10.0)
+
+            for iteration in range(1, self.refine_iter):
+                logits_q = self.get_logits(keyframe_f_q, seqs=seqs, selected_seq=seq)  # [n_tasks, 1, num_class, h, w]
+                keyframe_proba_q = self.get_probas(logits_q, seqs=seqs, selected_seq=seq)
+
+                keyframe_proba_q = F.interpolate(keyframe_proba_q[:, 0], pseudogt_keyframe.shape[-2:])
+                keyframe_proba_q = keyframe_proba_q.unsqueeze(1)
+
+                # Ignoring the Padding from Resize (using valid_pixels_q) only, Groundtruth is from preds
+                loss = self.get_ce(keyframe_proba_q, val_q_pixels, pseudogt_keyframe, reduction='none')
+
+                optimizer.zero_grad()
+                loss.sum(0).backward()
+                optimizer.step()
+
+    def TTI(self,
               features_s: torch.tensor,
               features_q: torch.tensor,
               gt_s: torch.tensor,
@@ -439,11 +422,9 @@ class Classifier(object):
               n_shots: torch.tensor,
               seqs: List[str],
               callback: VisdomLogger,
-              weights: List[int] = None,
-              roi_grid: torch.tensor = None,
-              consistency_type: str = '') -> torch.tensor:
+              weights: List[int] = None) -> torch.tensor:
         """
-        Performs RePRI inference
+        Performs TTI + RePRI inference
 
         inputs:
             features_s : shape [n_tasks, shot, c, h, w]
@@ -453,7 +434,6 @@ class Classifier(object):
             subcls : List of classes present in each task
             seqs: List of sequence names
             n_shots : # of support shots for each task, shape [n_tasks,]
-
         updates :
             prototypes : torch.Tensor of shape [n_tasks, num_class, c]
 
@@ -478,8 +458,6 @@ class Classifier(object):
         original_l4 = l4
         if l4 == 'auto':
             l4 = 1 / n_shots
-        #else:
-        #    l4 = l4 #* torch.ones_like(n_shots)
 
         self.prototype.requires_grad_()
         self.bias.requires_grad_()
@@ -494,9 +472,8 @@ class Classifier(object):
         one_hot_gt_s = to_one_hot(ds_gt_s, self.num_classes)  # [n_tasks, shot, num_classes, h, w]
 
         for iteration in range(1, self.adapt_iter):
-
-            logits_s = self.get_logits(features_s)  # [n_tasks, shot, num_class, h, w]
-            logits_q = self.get_logits(features_q)  # [n_tasks, 1, num_class, h, w]
+            logits_s = self.get_logits(features_s, seqs=seqs)  # [n_tasks, shot, num_class, h, w]
+            logits_q = self.get_logits(features_q, seqs=seqs)  # [n_tasks, 1, num_class, h, w]
             proba_q = self.get_probas(logits_q)
             proba_s = self.get_probas(logits_s)
 
@@ -505,8 +482,7 @@ class Classifier(object):
                                                               reduction='none')
             if original_l4 != 0 and self.enable_temporal:
                 tloss = self.get_temporal_loss(features_q, valid_pixels_q, proba_q,
-                                               seqs, features_s, valid_pixels_s, one_hot_gt_s,
-                                               roi_grid=roi_grid, consistency_type=consistency_type)
+                                               seqs, features_s, valid_pixels_s, one_hot_gt_s)
             else:
                 tloss = 0
 
@@ -520,7 +496,7 @@ class Classifier(object):
             # Update FB_param
             if (iteration + 1) in self.FB_param_update  \
                     and ('oracle' not in self.FB_param_type) and (l2.sum().item() != 0):
-                deltas = self.compute_FB_param(features_q, gt_q).cpu()
+                deltas = self.compute_FB_param(features_q, gt_q, seqs=seqs).cpu()
                 l2 += 1
                 self.enable_temporal = True
 
@@ -572,8 +548,7 @@ class Classifier(object):
     def update_callback(self, callback, iteration: int, features_s: torch.tensor,
                         features_q: torch.tensor, subcls: List[int],
                         gt_s: torch.tensor, gt_q: torch.tensor,
-                        seqs: List[str] = None, tti_flag:bool = False,
-                        roi_grid:torch.tensor = None) -> None:
+                        seqs: List[str] = None, tti_flag:bool = False) -> None:
         """
         Updates the visdom callback in case live visualization of metrics is desired
 
@@ -589,8 +564,8 @@ class Classifier(object):
         returns :
             callback : Visdom logger
         """
-        logits_q = self.get_logits(features_q)  # [n_tasks, shot, num_class, h, w]
-        logits_s = self.get_logits(features_s)  # [n_tasks, shot, num_class, h, w]
+        logits_q = self.get_logits(features_q, seqs=seqs)  # [n_tasks, shot, num_class, h, w]
+        logits_s = self.get_logits(features_s, seqs=seqs)  # [n_tasks, shot, num_class, h, w]
         proba_q = self.get_probas(logits_q).detach()  # [n_tasks, shot, num_class, h, w]
         proba_s = self.get_probas(logits_s).detach()  # [n_tasks, shot, num_class, h, w]
 
@@ -606,6 +581,8 @@ class Classifier(object):
         oracle_FB_param /= (valid_pixels_q.unsqueeze(2)).sum(dim=(1, 3, 4))
 
         one_hot_gt_s = to_one_hot(ds_gt_s, self.num_classes)  # [n_tasks, shot, num_classes, h, w]
+
+
         ce_s = self.get_ce(proba_s, valid_pixels_s, one_hot_gt_s)
         ce_q = self.get_ce(proba_q, valid_pixels_q, one_hot_gt_q)
 
@@ -621,7 +598,6 @@ class Classifier(object):
                 # TODO: Get Consistency type to be passed properly
                 tloss = self.get_temporal_loss(features_q, valid_pixels_q, proba_q,
                                                seqs, features_s, valid_pixels_s, one_hot_gt_s,
-                                               roi_grid=roi_grid, consistency_type='',
                                                reduction='mean')
                 callback.scalars(['tti'], iteration, [tloss.mean()], title='Temporal Transductive Inference')
             marginal2oracle = (oracle_FB_param * torch.log(oracle_FB_param / marginal + 1e-10)).sum(1).mean()

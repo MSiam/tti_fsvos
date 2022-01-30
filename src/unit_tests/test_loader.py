@@ -4,9 +4,8 @@ import torch
 import cv2
 import numpy as np
 
-from .util import load_cfg_from_cfg_file, merge_cfg_from_list
-from .dataset.dataset import get_val_loader
-from src.flow_viz import flow_to_image
+from src.util import load_cfg_from_cfg_file, merge_cfg_from_list
+from src.dataset.dataset import get_val_loader
 
 def parse_args() -> None:
     parser = argparse.ArgumentParser(description='Testing')
@@ -28,6 +27,7 @@ def denormalize(img, mean, scale):
 
 if __name__ == "__main__":
     args = parse_args()
+    args.distributed = False
 
     # ========== Data  ==========
     episodic_val_loader, _ = get_val_loader(args)
@@ -38,11 +38,6 @@ if __name__ == "__main__":
     # 958, 1016, 11533, 153
     for i, (qry_img, q_label, spprt_imgs, s_label, subcls, _, image_path)  in enumerate(episodic_val_loader):
         print(image_path)
-        if args.flow_aggregation:
-            qry_flow = qry_img['flow']
-            qry_img = qry_img['image']
-            flow_img = flow_to_image(qry_flow[0].numpy().transpose(1,2,0))
-            cv2.imwrite("tmp/qry_flow_%05d.png"%i, flow_img)
 
         qry_img = denormalize(qry_img[0], args.mean, args.std)
         cv2.imwrite("tmp/qry_img_%05d.png"%i, qry_img)

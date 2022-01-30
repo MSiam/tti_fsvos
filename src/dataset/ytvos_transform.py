@@ -203,6 +203,7 @@ class Stack(object):
 
         assert num_img == num_anno
         img_stack = np.stack(imgs, axis=0)
+
         anno_stack = np.stack(annos, axis=0)
 
         return img_stack, anno_stack
@@ -216,9 +217,9 @@ class ToTensor(object):
     def __call__(self, imgs, annos):
 
         imgs = torch.from_numpy(imgs.copy())
-        annos = torch.from_numpy(annos.astype(np.uint8, copy=True)).float()
-
         imgs = imgs.permute(0, 3, 1, 2).contiguous()
+
+        annos = torch.from_numpy(annos.astype(np.uint8, copy=True)).float()
         annos = annos.permute(0, 3, 1, 2).contiguous()
 
         return imgs, annos

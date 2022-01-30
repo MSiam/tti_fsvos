@@ -14,7 +14,7 @@ run=test
 
 if [ $DATA == "inference/ytvis"] || [ $DATA == "inference/minivspw2minivspw" ] 
 then
-    run=test_ytvis
+    run=test_nonbatched
     test_num=0
     ADAPT=50
 fi

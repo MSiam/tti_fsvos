@@ -1,3 +1,6 @@
+import torch.nn.functional as F
+import torch
+
 import os
 import cv2
 from PIL import Image
@@ -7,7 +10,7 @@ from mpl_toolkits.axes_grid1 import ImageGrid
 import numpy as np
 import matplotlib
 from typing import List
-from src.flow_viz import flow_to_image
+from src.util import compute_map, to_one_hot
 
 cmaps = ['winter', 'hsv', 'Wistia', 'BuGn']
 
@@ -92,6 +95,7 @@ def make_episode_visualization_cv2(img_s: np.ndarray,
     create_dir('preds', method, save_path)
 
     for i, (path, img, mask) in enumerate(zip(path_s, img_s, gt_s)):
+
         img = crop_invalid_rect(path, img)
         mask = crop_invalid_rect(path, mask)
         overlay_img = make_overlay_img(img, mask)
@@ -110,10 +114,62 @@ def make_episode_visualization_cv2(img_s: np.ndarray,
     overlay_img_pred = make_overlay_img(img_q, preds)
     cv2.imwrite(save_path.replace(method, '%s/preds/'%method), overlay_img_pred)
 
+def make_keyframes_vis(probas: torch.tensor, img_q: np.ndarray, f_q: torch.tensor, f_s: torch.tensor,
+        gt_s: torch.tensor, gt_q: torch.tensor, paths: List[str], save_path: str,
+        mean: List[float] = [0.485, 0.456, 0.406], std: List[float] = [0.229, 0.224, 0.225],
+        fb_estimate: torch.tensor = None):
+
+    method = save_path.split('/')[-2]
+    create_dir('keyframes', method, save_path)
+
+    ds_gt_q = F.interpolate(gt_q.float(), size=f_s.size()[-2:], mode='nearest').long()
+    ds_gt_s = F.interpolate(gt_s.float(), size=f_s.size()[-2:], mode='nearest').long()
+    ds_probas = F.interpolate(probas[:,0], size=f_s.size()[-2:], mode='nearest').unsqueeze(1)
+
+    val_q_pixels = (ds_gt_q != 255).float()
+    val_s_pixels = (ds_gt_s != 255).float()
+
+    ds_probas = torch.argmax(ds_probas, dim=2)
+    ds_probas_one_hot = to_one_hot(ds_probas, 2)
+
+    protos = compute_map(ds_probas_one_hot, val_q_pixels, f_q)
+    one_hot_gt_s = to_one_hot(ds_gt_s, 2)
+    sprt_protos = compute_map(one_hot_gt_s, val_s_pixels, f_s)
+
+    # Cossine similarity of all frames to the same sprt (repeated)
+    cossim = F.cosine_similarity(sprt_protos, protos, dim=1)
+    if fb_estimate is not None:
+        marginal = (val_q_pixels.unsqueeze(2) * ds_probas).sum(dim=(1, 3, 4))
+        marginal /= val_q_pixels.sum(dim=(1, 2, 3)).unsqueeze(1)
+        d_kl = (marginal * torch.log(marginal / (fb_estimate + 1e-10))).sum(1)
+        cossim = (1 - cossim) + d_kl
+        keyframe_indx = torch.argmin(cossim)
+    else:
+        keyframe_indx = torch.argmax(cossim)
+
+    img_q = img_q[keyframe_indx]
+    img_q = np.transpose(img_q, (1, 2, 0))
+    if img_q.min() <= 0:
+        img_q *= std
+        img_q += mean
+
+    img_q = np.array(img_q * 255, np.uint8)
+    path_q = paths[int(keyframe_indx)]
+    img_q = crop_invalid_rect(path_q, img_q)
+
+    us_probas = F.interpolate(probas[:,0], size=img_q.shape[:2], mode='nearest').unsqueeze(1)
+    preds = np.argmax(probas[keyframe_indx, 0].cpu(), axis=0)
+    preds = crop_invalid_rect(path_q, preds)
+
+    overlay_img_q = make_overlay_img(img_q, preds)
+    cv2.imwrite(save_path.replace(method, '%s/keyframes/'%method), overlay_img_q)
+
 def make_episode_visualization(img_s: np.ndarray,
                                img_q: np.ndarray,
                                gt_s: np.ndarray,
                                gt_q: np.ndarray,
+                               path_s: str,
+                               path_q: str,
                                preds: np.ndarray,
                                save_path: str,
                                flow_q: np.ndarray = None,
@@ -171,10 +227,6 @@ def make_episode_visualization(img_s: np.ndarray,
             img = img_s[j - start]
             mask = gt_s[j - start]
             make_plot(ax, img, mask)
-        elif flow_q is not None:
-            flow_img = flow_to_image(flow_q.transpose(1,2,0))
-            mask = np.zeros(flow_img.shape[:2])
-            make_plot(ax, flow_img, mask)
         ax.axis('off')
 
     # 2) Visualize the predictions evolving with time

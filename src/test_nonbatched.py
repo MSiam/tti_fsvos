@@ -11,11 +11,11 @@ from visdom_logger import VisdomLogger
 from collections import defaultdict
 from .dataset.dataset import get_val_loader
 from .util import AverageMeter, batch_intersectionAndUnionGPU, get_model_dir, main_process, \
-                  batch_vid_consistencyGPU
+                  batch_vid_consistencyGPU, compute_map
 
 from .util import find_free_port, setup, cleanup, to_one_hot, intersectionAndUnionGPU
 from .classifier import Classifier
-from .model.pspnet import get_model
+from .model.model import get_model
 import torch.distributed as dist
 from tqdm import tqdm
 from .util import load_cfg_from_cfg_file, merge_cfg_from_list
@@ -23,9 +23,9 @@ import argparse
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.multiprocessing as mp
 import time
-from .visu import make_episode_visualization, make_episode_visualization_cv2
+from .visu import make_episode_visualization, make_episode_visualization_cv2, \
+                  make_keyframes_vis
 from typing import Tuple
-from src.util import generate_roi_grid
 
 def parse_args() -> None:
     parser = argparse.ArgumentParser(description='Testing')
@@ -37,17 +37,6 @@ def parse_args() -> None:
     if args.opts is not None:
         cfg = merge_cfg_from_list(cfg, args.opts)
     return cfg
-
-def log_temporal_repri(intersection, union, gt_q, features_q, probas, seq_name, method):
-    IoU = intersection[:, 0, 1] / union[:, 0, 1]
-    valid_pixels_q = (gt_q != 255).float()
-    marginal = (valid_pixels_q.unsqueeze(2) * probas).sum(dim=(1, 3, 4))
-    marginal /= valid_pixels_q.sum(dim=(1, 2, 3)).unsqueeze(1)
-
-    out_dir = os.path.join('dumped_marginals', method)
-    if not os.path.exists(out_dir):
-        os.makedirs(out_dir)
-    np.save(os.path.join(out_dir, '%s.npy'%seq_name[0]), {'miou': IoU, 'marginal': marginal})
 
 def main_worker(rank: int,
                 world_size: int,
@@ -77,13 +66,13 @@ def main_worker(rank: int,
         assert os.path.isfile(filepath), filepath
         print("=> loading weight '{}'".format(filepath))
         checkpoint = torch.load(filepath)
-        model.load_state_dict(checkpoint['state_dict'])
+        model.load_state_dict(checkpoint['state_dict'], strict=False)
         print("=> loaded weight '{}'".format(filepath))
     else:
         print("=> Not loading anything")
 
     # ========== Data  ==========
-    val_loader, _ = get_val_loader(args)
+    val_loader, _ = get_val_loader(args, split_type='test')
 
     # ========== Test  ==========
     if args.episodic_val or args.temporal_episodic_val:
@@ -92,14 +81,6 @@ def main_worker(rank: int,
                                               model=model,
                                               use_callback=(args.visdom_port != -1),
                                               suffix=f'test')
-    else:
-        mIoU, _ = standard_validate(args=args,
-                                  val_loader=val_loader,
-                                  model=model,
-                                  use_callback=(args.visdom_port != -1),
-                                  suffix=f'test')
-        print("Mean IoU on Validation Set ", mIoU)
-
     if args.distributed:
         dist.all_reduce(val_Iou), dist.all_reduce(val_loss)
         val_Iou /= world_size
@@ -127,20 +108,19 @@ def episodic_validate(args: argparse.Namespace,
     h = model.module.feature_res[0]
     w = model.module.feature_res[1]
 
-    all_weights = {'tti': [1.0,'auto','auto','auto'], 'repri': [1.0,'auto','auto',0.0]}
+    if not hasattr(args, 'vc_wins'):
+        args.vc_wins = [15]
 
+    all_weights = {'tti': [1.0,'auto','auto','auto'], 'repri': [1.0,'auto','auto',0.0]}
+    if hasattr(args,'selected_weights') and len(args.selected_weights) != 0:
+        all_weights = {'quickval': args.selected_weights}
     runtimes = {k: torch.zeros(args.n_runs) for k in all_weights.keys()}
     val_IoUs = {k: np.zeros(args.n_runs) for k in all_weights.keys()}
     val_Fscores = {k: np.zeros(args.n_runs) for k in all_weights.keys()}
-    val_VCs = {k: np.zeros(args.n_runs) for k in all_weights.keys()}
+    val_VCs = {}
+    for method in all_weights.keys():
+        val_VCs[method] = {kwin: np.zeros(args.n_runs) for kwin in args.vc_wins}
     val_losses = {k: np.zeros(args.n_runs) for k in all_weights.keys()}
-
-    if args.tloss_type == 'fb_consistency':
-        roi_grid = generate_roi_grid(h, w)
-        consistency_type = args.consistency_type
-    else:
-        roi_grid = None
-        consistency_type = None
 
     # ========== Perform the runs  ==========
     for run in tqdm(range(args.n_runs)):
@@ -161,21 +141,33 @@ def episodic_validate(args: argparse.Namespace,
         for qry_img, q_label, spprt_imgs, s_label, subcls, misc, paths  in tqdm(val_loader):
             t0 = time.time()
 
+            # ====================== Only used for quick validation during training =============
+            if 'quickval' in all_weights:
+                skip = 5
+                qry_img = qry_img[:, ::skip]
+                q_label = q_label[:, ::skip]
+
+                max_frames = 20
+                qry_img = qry_img[:, :max_frames]
+                q_label = q_label[:, :max_frames]
+
             # =========== Generate tasks and extract features for each task ===============
             with torch.no_grad():
-                all_sprt = {'imgs': [], 'masks': []}
+                all_sprt = {'imgs': [], 'masks': [], 'paths': []}
                 all_qry = {'imgs': [], 'masks': [], 'flows': [], 'paths': None}
 
                 q_label = q_label.to(dist.get_rank(), non_blocking=True)
                 spprt_imgs = spprt_imgs.to(dist.get_rank(), non_blocking=True)
                 s_label = s_label.to(dist.get_rank(), non_blocking=True)
                 qry_img = qry_img.to(dist.get_rank(), non_blocking=True)
-                #np.save('qry.npy', qry_img.cpu().numpy())
+
                 f_s = model.module.extract_features(spprt_imgs.squeeze(0))
+
                 if qry_img.ndim > 4:
                     # B x N x C x H x W --> N x C X H X W
                     qry_img = qry_img.squeeze(0) # Squeeze batch dim
                     q_label = q_label.squeeze(0) # Squeeze batch dim
+
                 f_q = model.module.extract_features(qry_img)
 
                 Nframes = f_q.size(0)
@@ -190,17 +182,17 @@ def episodic_validate(args: argparse.Namespace,
                 gt_s = s_label.repeat(Nframes, 1, 1, 1)
                 gt_q = q_label.unsqueeze(1)
                 classes = [class_.item() for class_ in subcls] * Nframes
-                seqs = misc * Nframes
+                seqs = np.array(misc * Nframes)
 
                 if args.visu:
                     all_sprt['imgs'] = spprt_imgs.cpu().numpy()
                     all_sprt['masks'] = s_label.cpu().numpy()
+                    all_sprt['paths'] = [p[0] for p in paths]
+
                     all_qry['imgs'] = qry_img.cpu().numpy()
                     all_qry['masks'] = q_label.cpu().numpy()
                     all_qry['paths'] = os.path.join(val_loader.dataset.img_dir, misc[0])
                     all_qry['paths'] = [os.path.join(all_qry['paths'], fname) for fname in sorted(os.listdir(all_qry['paths'])) ]
-                    if args.flow_aggregation:
-                        all_qry['flows'] = qry_flow.cpu().numpy()
 
 
             # =========== Normalize features along channel dimension ===============
@@ -214,20 +206,40 @@ def episodic_validate(args: argparse.Namespace,
 
                 # ===========  Initialize the classifier + prototypes + F/B parameter Π ===============
                 classifier = Classifier(args)
-                classifier.init_prototypes(features_s, features_q, gt_s, gt_q, classes, callback)
-                batch_deltas = classifier.compute_FB_param(features_q=features_q, gt_q=gt_q)
+                classifier.init_prototypes(features_s, features_q, gt_s, gt_q, classes, callback, seqs=seqs)
+                batch_deltas = classifier.compute_FB_param(features_q=features_q, gt_q=gt_q, seqs=seqs)
 
-                # =========== Perform RePRI inference ===============
-                batch_deltas = classifier.RePRI(features_s, features_q, gt_s, gt_q, classes, n_shots, seqs, callback,
-                                                weights=weights, roi_grid=roi_grid, consistency_type=consistency_type)
+                # =========== Perform TTI inference ===============
+                batch_deltas = classifier.TTI(features_s, features_q, gt_s, gt_q, classes, n_shots, seqs, callback,
+                                                weights=weights)
                 t1 = time.time()
                 runtime[method] += t1 - t0
-                logits = classifier.get_logits(features_q)  # [n_tasks, shot, h, w]
+                logits = classifier.get_logits(features_q, seqs=seqs)  # [n_tasks, shot, h, w]
                 logits = F.interpolate(logits,
                                        size=(H, W),
                                        mode='bilinear',
                                        align_corners=True)
                 probas = classifier.get_probas(logits).detach()
+                if args.visu_keyframes:
+                    root = os.path.join('plots', 'episodes', method, 'split_%d'%args.train_split)
+                    os.makedirs(root, exist_ok=True)
+                    save_path = os.path.join(root, f'run_{run}_iter_{iter_num}.png')
+                    make_keyframes_vis(probas=probas, img_q=all_qry['imgs'].copy(),
+                                       f_q=features_q, f_s=features_s, gt_s=gt_s, gt_q=gt_q,
+                                       paths=all_qry['paths'], save_path=save_path)
+
+                if args.refine_keyframes_ftune and method == "tti":
+                    # gt_q is only used to identify valid pixels and remove ones from padding for aug.
+                    classifier.ftune_selected_keyframe(all_probas=probas, all_f_q=features_q, all_f_s=features_s,
+                                                       all_gt_s=gt_s, all_gt_q=gt_q, seqs=seqs,
+                                                       refine_oracle=args.refine_oracle)
+                    logits = classifier.get_logits(features_q, seqs=seqs)  # [n_tasks, shot, h, w]
+                    logits = F.interpolate(logits,
+                                           size=(H, W),
+                                           mode='bilinear',
+                                           align_corners=True)
+                    probas = classifier.get_probas(logits).detach()
+
                 #np.save(f'{method}_probas.npy', probas.detach().cpu())
                 intersection, union, _ = batch_intersectionAndUnionGPU(probas, gt_q, 2)  # [n_tasks, shot, num_class]
                 intersection, union = intersection.cpu(), union.cpu()
@@ -236,10 +248,11 @@ def episodic_validate(args: argparse.Namespace,
                     log_temporal_repri(intersection, union, gt_q, features_q, probas, misc, method)
 
                 if args.eval_vc:
-                    video_consistency = batch_vid_consistencyGPU(seqs, probas, gt_q, 2)  # [n_tasks, shot, num_class]
-                    video_consistency = video_consistency.cpu()
+                    video_consistency = batch_vid_consistencyGPU(seqs, probas, gt_q, 2,
+                                                                 args.vc_size_th, args.vc_wins)
+                    video_consistency = {k: v.cpu() for k, v in video_consistency.items()}
                 else:
-                    video_consistency = torch.zeros(len(seqs), 1, 2)
+                    video_consistency = {'3': torch.zeros(len(seqs), 1, 2)}
 
                 # ================== Log metrics ==================
                 one_hot_gt = to_one_hot(gt_q, 2)
@@ -253,14 +266,16 @@ def episodic_validate(args: argparse.Namespace,
                     cls_union[method][class_] += union[i, 0, 1]
                     if seqs[i] not in visited_seqs:
                         visited_seqs.append(seqs[i])
-                        cls_vc[method][class_] += video_consistency[i, 0, 1]
+                        for kwin in video_consistency.keys():
+                            if kwin not in cls_vc[method]:
+                                cls_vc[method][kwin] = defaultdict(int)
+                            cls_vc[method][kwin][class_] += video_consistency[kwin][i, 0, 1]
                         cls_n_vc[method][class_] += 1
 
                 for class_ in cls_union[method]:
                     IoU[method][class_] = cls_intersection[method][class_] / (cls_union[method][class_] + 1e-10)
                     Fscores[method][class_] = 2 * cls_intersection[method][class_] / \
                                                 (cls_union[method][class_] + cls_intersection[method][class_] + 1e-10)
-                    cls_vc[method][class_] /= (cls_n_vc[method][class_] + 1e-10)
 
                 if (iter_num % 200 == 0):
                     mIoU = np.mean([IoU[method][i] for i in IoU[method]])
@@ -275,18 +290,16 @@ def episodic_validate(args: argparse.Namespace,
                 # ================== Visualization ==================
                 if args.visu:
                     for i in range(Nframes):
-                        root = os.path.join('plots', 'episodes', method, 'split_%d'%args.train_split)
+                        root = os.path.join(args.vis_dir, 'episodes', method, 'split_%d'%args.train_split)
                         os.makedirs(root, exist_ok=True)
                         save_path = os.path.join(root, f'run_{run}_iter_{iter_num}_{i:05d}.png')
-                        if args.flow_aggregation:
-                            flow_q = all_qry['flows'][i]
-                        else:
-                            flow_q = None
+                        flow_q = None
+
                         make_episode_visualization_cv2(img_s=all_sprt['imgs'][0].copy(),
                                                        img_q=all_qry['imgs'][i].copy(),
                                                        gt_s=all_sprt['masks'][0].copy(),
                                                        gt_q=all_qry['masks'][i].copy(),
-                                                       path_s=[all_qry['paths'][i]],
+                                                       path_s=all_sprt['paths'],
                                                        path_q=all_qry['paths'][i],
                                                        preds=probas[i].cpu().numpy().copy(),
                                                        save_path=save_path,
@@ -295,17 +308,23 @@ def episodic_validate(args: argparse.Namespace,
         # ================== Evaluation Metrics on ALl episodes ==================
         for method in all_weights.keys():
             print('========= Method {}==========='.format(method))
-            runtimes[method][run] = runtime[method]
+            runtimes[method][run] = runtime[method] / float(len(val_loader))
             mIoU = np.mean(list(IoU[method].values()))
             fscore = np.mean(list(Fscores[method].values()))
-            vc = np.mean(list(cls_vc[method].values()))
+
+            for kwin in cls_vc[method].keys():
+                for class_ in cls_vc[method][kwin].keys():
+                   cls_vc[method][kwin][class_] /= (cls_n_vc[method][class_] + 1e-10)
+
+            vc = {kwin: np.mean(list(cls_vc[method][kwin].values())) for kwin in cls_vc[method].keys()}
             print('mIoU---Val result: mIoU {:.4f}.'.format(mIoU))
             for class_ in cls_union[method]:
                 print("Class {} : {:.4f}".format(class_, IoU[method][class_]))
 
             val_Fscores[method][run] = fscore
             val_IoUs[method][run] = mIoU
-            val_VCs[method][run] = vc
+            for kwin in vc.keys():
+                val_VCs[method][kwin][run] = vc[kwin]
             val_losses[method][run] = loss_meter.avg
 
     # ================== Save metrics ==================
@@ -314,59 +333,18 @@ def episodic_validate(args: argparse.Namespace,
         print(f'========Final Evaluation of {method} with weights {str_weights}============')
         print('Average mIoU over {} runs --- {:.4f}.'.format(args.n_runs, val_IoUs[method].mean()))
         print('Average Fscore over {} runs --- {:.4f}.'.format(args.n_runs, val_Fscores[method].mean()))
-        print('Average Vconsistency over {} runs --- {:.4f}.'.format(args.n_runs, val_VCs[method].mean()))
-        print('Average runtime / run --- {:.4f}.'.format(runtimes[method].mean()))
+
+        vc_text = 'Average Vconsistency over {} runs ---'.format(args.n_runs)
+        for kwin in val_VCs[method].keys():
+            kwin_vc_mean = np.mean(val_VCs[method][kwin])
+            vc_text += ' (' + str(kwin) + ',' + str(kwin_vc_mean)+ ') '
+        print(vc_text)
+        print('Average runtime / seq --- {:.4f}.'.format(runtimes[method].mean()))
 
     # This method works on multiple weights can not be used outside
+    if 'quickval' in all_weights:
+        return torch.tensor(np.mean(list(IoU['quickval'].values()))), torch.tensor(np.mean(val_losses['quickval']))
     return None, None
-
-
-def standard_validate(args: argparse.Namespace,
-                      val_loader: torch.utils.data.DataLoader,
-                      model: DDP,
-                      use_callback: bool,
-                      suffix: str = 'test') -> Tuple[torch.tensor, torch.tensor]:
-
-    print('==> Standard validation')
-    model.eval()
-    loss_fn = torch.nn.CrossEntropyLoss(ignore_index=255)
-    iterable_val_loader = iter(val_loader)
-
-    bar = tqdm(range(len(iterable_val_loader)))
-
-    loss = 0.
-    intersections = torch.zeros(args.num_classes_tr).to(dist.get_rank())
-    unions = torch.zeros(args.num_classes_tr).to(dist.get_rank())
-
-    with torch.no_grad():
-        for i in bar:
-            images, gt = iterable_val_loader.next()
-            images = images.to(dist.get_rank(), non_blocking=True)
-            gt = gt.to(dist.get_rank(), non_blocking=True)
-
-            if images.ndim > 4:
-                # Flatten frames dim with batch
-                images = images.view((-1, *images.shape[-3:]))
-                gt = gt.view((-1, *gt.shape[-2:]))
-
-            logits = model(images).detach()
-            loss += loss_fn(logits, gt)
-            intersection, union, _ = intersectionAndUnionGPU(logits.argmax(1),
-                                                             gt,
-                                                             args.num_classes_tr,
-                                                             255)
-            intersections += intersection
-            unions += union
-        loss /= len(val_loader.dataset)
-
-    if args.distributed:
-        dist.all_reduce(loss)
-        dist.all_reduce(intersections)
-        dist.all_reduce(unions)
-
-    mIoU = (intersections / (unions + 1e-10)).mean()
-    loss /= dist.get_world_size()
-    return mIoU, loss
 
 
 if __name__ == "__main__":
@@ -379,10 +357,7 @@ if __name__ == "__main__":
 
     world_size = len(args.gpus)
     distributed = world_size > 1
+    # TODO: Cleanup unnecessary distributed in inference not used
     args.distributed = distributed
     args.port = find_free_port()
     main_worker(0, world_size, args)
-#    mp.spawn(main_worker,
-#             args=(world_size, args),
-#             nprocs=world_size,
-#             join=True)

@@ -5,32 +5,122 @@ import torch.nn.functional as F
 import yaml
 import copy
 from ast import literal_eval
-from typing import Callable, Iterable, List, TypeVar
+from typing import Callable, Iterable, List, TypeVar, Optional, Dict
 import torch.distributed as dist
 from typing import Tuple
 import argparse
+from scipy.ndimage.morphology import distance_transform_edt, grey_erosion
+import wandb
+import pathlib
 
+
+def get_split_base_protos(self, class_mapping):
+    base_protos = np.load('/local/data0/avg_protos.npy', allow_pickle=True).item()
+    base_protos = base_protos['res5']
+    protos = {}
+
+    class_mapping = [0] + class_mapping
+    for cls_idx, cls in enumerate(class_mapping):
+        protos[cls_idx] = base_protos[cls]
+    assert len(protos.keys()) == 31
+    return protos
+
+def init_or_resume_wandb_run(wandb_id_file_path: pathlib.Path,
+                             project_name: Optional[str] = None,
+                             entity_name: Optional[str] = None,
+                             run_name: Optional[str] = None,
+                             config: Optional[Dict] = None):
+    """Detect the run id if it exists and resume
+        from there, otherwise write the run id to file.
+        Returns the config, if it's not None it will also update it first
+    """
+    # if the run_id was previously saved, resume from there
+    if wandb_id_file_path.exists():
+        print('Resuming from wandb path... ', wandb_id_file_path)
+        resume_id = wandb_id_file_path.read_text()
+        wandb.init(entity=entity_name,
+                   project=project_name,
+                   name=run_name,
+                   resume=resume_id,
+                   config=config)
+                   # settings=wandb.Settings(start_method="thread"))
+    else:
+        # if the run_id doesn't exist, then create a new run
+        # and write the run id the file
+        print('Creating new wandb instance...', wandb_id_file_path)
+        run = wandb.init(entity=entity_name, project=project_name, name=run_name, config=config)
+        wandb_id_file_path.write_text(str(run.id))
+
+    wandb_config = wandb.config
+    if config is not None:
+        # update the current passed in config with the wandb_config
+        wandb.config.update(config)
+
+    return config
 
 A = TypeVar("A")
 B = TypeVar("B")
 
-def generate_roi_grid(h, w):
-    roi = torch.zeros((h*w, h*w))
-    window = 10
-    for y in range(h):
-        for x in range(w):
-            cidx = y*w+x
-            for ky in range(-window//2, window//2):
-                for kx in range(-window//2, window//2):
+def create_pseudogt(proba):
+    proba_temp = torch.argmax(proba, dim=2)
+    proba = torch.ones_like(proba_temp) * 255
 
-                    iky = y+ky if y+ky > 0 else 0
-                    iky = iky if iky < h else h-1
-                    ikx = x+kx if x+kx > 0 else 0
-                    ikx = ikx if ikx < w else w-1
+    # Create distance transform to create pseudo gt with ignore pixels around boundary
+    # To avoid propagation of errors
+    erosion_size = 3
+    pos_th = 0.8
+    h, w = proba.shape[-2:]
+    neg_th = 0.2 * np.sqrt(h**2+w**2)
 
-                    kidx = iky*w + ikx
-                    roi[cidx, kidx] = 1
-    return roi.cuda()
+    #eroded_mask = grey_erosion(proba_temp.cpu(), size=(1,1,erosion_size, erosion_size))
+    # Compute distance transform
+    #dt = distance_transform_edt(np.logical_not(eroded_mask))
+    dt = distance_transform_edt(np.logical_not(proba_temp.cpu() ))
+
+    negatives = torch.tensor(dt > neg_th)
+    proba[proba_temp==1] = 1
+    proba[negatives] = 0
+    return proba
+
+def get_interval(grid, roi_window):
+    grid = grid[:-1]
+    if grid == 'c':
+        start = - roi_window // 2
+        end = roi_window // 2
+    elif grid == 'min':
+        start = 0
+        end = roi_window
+    elif grid == 'max':
+        start = - roi_window
+        end = 0
+    return start, end
+
+def generate_roi_grid(h, w, roi_window=10, grids=['cx-cy']):
+    # cx: centerx, cy: centery, minx: minimum x, maxx: maximum x, ..
+
+    rois = []
+    for grid in grids:
+        gridx, gridy = grid.split('-')
+        roi = torch.zeros((h*w, h*w))
+        for y in range(h):
+            for x in range(w):
+                cidx = y*w+x
+
+                startx, endx = get_interval(gridx, roi_window)
+                starty, endy = get_interval(gridy, roi_window)
+
+                for ky in range(starty, endy):
+                    for kx in range(startx, endx):
+
+                        iky = y+ky if y+ky > 0 else 0
+                        iky = iky if iky < h else h-1
+                        ikx = x+kx if x+kx > 0 else 0
+                        ikx = ikx if ikx < w else w-1
+
+                        kidx = iky*w + ikx
+                        roi[cidx, kidx] = 1
+        rois.append(roi.cuda())
+    return rois
 
 def main_process(args: argparse.Namespace) -> bool:
     if args.distributed:
@@ -82,15 +172,22 @@ def map_(fn: Callable[[A], B], iter: Iterable[A]) -> List[B]:
     return list(map(fn, iter))
 
 
-def get_model_dir(args: argparse.Namespace) -> str:
+def get_model_dir(args: argparse.Namespace, ckpt_path: str='') -> str:
     """
     Obtain the directory to save/load the model
     """
-    path = os.path.join('model_ckpt',
+    if ckpt_path == '':
+        ckpt_path = args.ckpt_path
+
+    model_type = 'pspnet'
+    if hasattr(args, 'model_type'):
+        model_type = args.model_type
+
+    path = os.path.join(ckpt_path,
                         args.train_name,
                         f'split={args.train_split}',
                         'model',
-                        f'pspnet_{args.arch}{args.layers}',
+                        f'{model_type}_{args.arch}{args.layers}',
                         f'smoothing={args.smoothing}',
                         f'mixup={args.mixup}')
     return path
@@ -109,6 +206,7 @@ def denorm(img, mean=None, scale=None):
 def map_label(lbl, colors=None, nclasses=None):
     if colors is None:
         colors = {i+1: np.random.random((1,3))*255 for i in range(nclasses)}
+    colors[255] = np.ones((1,3))*255
 
     colored_lbl = np.zeros((*lbl.shape, 3), dtype=np.uint8)
     for cls in np.unique(lbl):
@@ -156,13 +254,17 @@ def vid_consistencyGPU(seqs: List[str],
                        preds: torch.Tensor,
                        target: torch.Tensor,
                        num_classes: int,
+                       size_th: int = 225, # 15**2
+                       window: int = 3,
                        ignore_index=255) -> torch.tensor:
 
     assert num_classes == 2, "VC does not support more than 2 classes including background"
     seqs = np.array(seqs)
     n_tasks = seqs.shape[0]
     video_consistency = torch.zeros(n_tasks, num_classes).cuda()
-    clip_length = 3
+    ignored_seqs = []
+
+    clip_length = window
 
     assert preds.shape == target.shape
 
@@ -195,17 +297,26 @@ def vid_consistencyGPU(seqs: List[str],
                 previous_pred = current_pred
                 previous_target = current_target
 
+#            if common_gt_area.sum() < size_th:
+#                continue
+
             current_vc.append((common_gt_area * common_pred_area).sum() / (common_gt_area.sum() + 1e-10) )
-        if len(current_vc) != 0: # skip small seqs
+
+        if len(current_vc) != 0: # skip small seqs in frames or with small object sizes
             video_consistency[seq_indices, 1] = torch.stack(current_vc).mean()
+        else:
+            ignored_seqs.append(seq)
 
     return video_consistency
 
 def batch_vid_consistencyGPU(seqs: List[str],
-                                      logits: torch.Tensor,
-                                      target: torch.Tensor,
-                                      num_classes: int,
-                                      ignore_index=255) -> torch.tensor:
+                             logits: torch.Tensor,
+                             target: torch.Tensor,
+                             num_classes: int,
+                             size_th: int = 225, # 15**2
+                             windows: List[int] = [3],
+                             ignore_index=255,
+                             ) -> torch.tensor:
     """
     inputs:
         logits : shape [n_task, shot, num_class, h, w]
@@ -219,20 +330,23 @@ def batch_vid_consistencyGPU(seqs: List[str],
     """
 
 
-    n_task, shots, num_classes, h, w = logits.size()
+    n_tasks, shots, num_classes, h, w = logits.size()
     H, W = target.size()[-2:]
 
-    logits = F.interpolate(logits.view(n_task * shots, num_classes, h, w),
-                           size=(H, W), mode='bilinear', align_corners=True).view(n_task, shots, num_classes, H, W)
+    logits = F.interpolate(logits.view(n_tasks * shots, num_classes, h, w),
+                           size=(H, W), mode='bilinear', align_corners=True).view(n_tasks, shots, num_classes, H, W)
     preds = logits.argmax(2)  # [n_task, shot, H, W]
 
-    n_tasks, shot, num_classes, H, W = logits.size()
-    n_seqs = len(np.unique(seqs))
-    video_consistency = torch.zeros(n_tasks, shot, num_classes)
-    for shot in range(shots):
-        vc = vid_consistencyGPU(seqs, preds[:,shot], target[:,shot],
-                                num_classes, ignore_index=ignore_index)
-        video_consistency[:, shot, :] = vc
+    video_consistency = {}
+    for window in windows:
+        video_consistency[window] = torch.zeros(n_tasks, shots, num_classes)
+
+        for shot in range(shots):
+            vc = vid_consistencyGPU(seqs, preds[:,shot], target[:,shot],
+                                    num_classes, size_th=size_th, window=window,
+                                    ignore_index=ignore_index)
+
+            video_consistency[window][:, shot, :] = vc
 
     return video_consistency
 
@@ -302,6 +416,24 @@ def intersectionAndUnionGPU(preds: torch.tensor,
     # print(torch.unique(intersection))
     return area_intersection, area_union, area_target
 
+def compute_map(mask, val_pixels, features, collapse_shot_dim=True):
+    """
+    mask: batch x shot x 2 x H x W
+    val_pixels: batch x shot x H x W
+    features: batch x shot x C x H x W
+    """
+    mask = mask[:, :, 1:] # Access Foreground Mask
+    mask = mask * val_pixels.unsqueeze(2)
+    if collapse_shot_dim:
+        protos = (features * mask).sum(dim=(1, 3, 4))
+        protos /= (mask.sum(dim=(1, 3, 4)) + 1e-10)
+        protos = F.normalize(protos, dim=1)
+    else:
+        protos = (features * mask).sum(dim=(3, 4))
+        protos /= (mask.sum(dim=(3, 4)) + 1e-10)
+        protos = F.normalize(protos, dim=2)
+
+    return protos
 
 # ======================================================================================================================
 # ======== All following helper functions have been borrowed from from https://github.com/Jia-Research-Lab/PFENet ======

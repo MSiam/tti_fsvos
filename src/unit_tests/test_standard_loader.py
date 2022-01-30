@@ -6,9 +6,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-from .util import load_cfg_from_cfg_file, merge_cfg_from_list
-from .dataset.dataset import get_val_loader, get_train_loader
-from src.flow_viz import flow_to_image
+from src.util import load_cfg_from_cfg_file, merge_cfg_from_list
+from src.dataset.dataset import get_val_loader, get_train_loader
 
 def parse_args() -> None:
     parser = argparse.ArgumentParser(description='Testing')
@@ -22,14 +21,6 @@ def parse_args() -> None:
         cfg = merge_cfg_from_list(cfg, args.opts)
     return cfg, args.train_flag
 
-def map_label(lbl, colors):
-    colored_lbl = np.zeros((*lbl.shape, 3), dtype=np.uint8)
-    for cls in np.unique(lbl):
-        if cls == 0:
-            continue
-        colored_lbl[lbl==cls] = colors[cls]
-    return colored_lbl
-
 def denormalize(img, mean, scale):
     img = img.permute(1,2,0)
     img = img * torch.tensor(scale) + torch.tensor(mean)
@@ -39,6 +30,7 @@ def denormalize(img, mean, scale):
 
 if __name__ == "__main__":
     args, train_flag = parse_args()
+    args.distributed = False
 
     # ========== Data  ==========
     train_loader, _ = get_train_loader(args)
@@ -51,8 +43,8 @@ if __name__ == "__main__":
     train_classes = train_loader.dataset.class_list_names
     val_classes = val_loader.dataset.class_list_names
 
-    intersect = [v for k, v in train_classes.items() if v in val_classes.values()]
-    assert len(intersect) == 0, "Overlap in classes"
+    #intersect = [v for k, v in train_classes.items() if v in val_classes.values()]
+    #assert len(intersect) == 0, "Overlap in classes"
 
     if not os.path.exists('tmp'):
         os.mkdir('tmp')
@@ -61,27 +53,23 @@ if __name__ == "__main__":
     colors = loader.dataset.class_colors
     print(colors)
     print(len(loader))
-    for i, (qry_img, q_label, spprt_imgs, s_label, chosen_cls, _, _)  in enumerate(loader):
-        for bsz in range(qry_img.shape[0]):
-            sprt_img = denormalize(spprt_imgs[bsz, 0], args.mean, args.std)
-            cv2.imwrite("tmp/sprt_img_%05d.png"%i, sprt_img)
-            #cv2.imshow("Spprt Img", sprt_img)
-
-            sprt_lbl = s_label[bsz, 0, 0]
-            sprt_colored_lbl = map_label(sprt_lbl, colors)
-            cv2.imwrite("tmp/sprt_lbl_%05d.png"%i, sprt_lbl.numpy())
-            #cv2.imshow("Spprt Lbl", sprt_colored_lbl)
-
-            for frame in range(qry_img.shape[1]):
-                img = denormalize(qry_img[bsz, frame], args.mean, args.std)
+    for i, (images, labels)  in enumerate(tqdm(loader)):
+#        pass
+        for bsz in range(images.shape[0]):
+            for frame in range(images.shape[1]):
+                img = denormalize(images[bsz, frame], args.mean, args.std)
                 cv2.imwrite("tmp/img_%05d.png"%i, img)
                 #cv2.imshow("image", img)
 
-                lbl = q_label[bsz, frame, 0].numpy()
-                colored_lbl = map_label(lbl, colors)
+                lbl = labels[bsz, frame, 0].numpy()
+                colored_lbl = np.zeros((*lbl.shape, 3), dtype=np.uint8)
+                for cls in np.unique(lbl):
+                    if cls == 0:
+                        continue
+                    colored_lbl[lbl==cls] = colors[cls]
                 cv2.imwrite("tmp/lbl_%05d.png"%i, colored_lbl)
                 #cv2.imshow("label", colored_lbl)
 
-                ch = cv2.waitKey()
+                ch = cv2.waitKey(10)
                 if ch %256 == ord('q'):
                     break
