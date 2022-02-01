@@ -40,7 +40,7 @@ do
 
             for SPLIT in $SPLITS
             do
-                dirname="results/test/${METHOD}/arch=resnet-${LAYERS}/data=${DATA}/shot=shot_${SHOT}/split=split_${SPLIT}"
+	            dirname="results/test/${METHOD}/arch=resnet-${LAYERS}/data=${DATA}/shot=shot_${SHOT}/refine=${REFINE}/multisprt=${MULTISPRT}/split=split_${SPLIT}"
                 mkdir -p -- "$dirname"
                 python3 -m src.test --config config_files/${DATA}.yaml \
                                     --opts train_split ${SPLIT} \
