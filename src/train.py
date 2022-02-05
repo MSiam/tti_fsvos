@@ -16,8 +16,7 @@ from .util import setup, cleanup, main_process
 from .util import denorm, map_label
 from tqdm import tqdm
 from .test import standard_validate, episodic_validate
-from .test_ytvis import episodic_validate as temporal_episodic_validate
-from .test_ytvis_meta import episodic_validate as temporal_episodic_validate_meta
+from .test_nonbatched import episodic_validate as temporal_episodic_validate
 from typing import Dict
 from torch import Tensor
 
@@ -91,7 +90,7 @@ def main_worker(rank: int,
     # ========== Validation ==================
     validate_fn = episodic_validate if args.episodic_val else standard_validate
     validate_fn = temporal_episodic_validate if args.temporal_episodic_val == 4 else validate_fn
-    validate_fn = temporal_episodic_validate_meta if args.temporal_episodic_val == 3 else validate_fn
+    #validate_fn = temporal_episodic_validate_meta if args.temporal_episodic_val == 3 else validate_fn
 
     # ========== Train Fn ==================
     # train_fn = do_episodic_epoch if hasattr(args, 'episodic_train') and args.episodic_train else do_epoch
