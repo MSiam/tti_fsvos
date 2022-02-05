@@ -34,7 +34,7 @@ fi
 ################# Never change workers 0 causes issue with the loader design
 for SPLIT in $SPLITS
 do
-	dirname="results/test/arch=resnet-${LAYERS}/data=${DATA}/shot=shot_${SHOT}/refine=${REFINE}/multisprt=${MULTISPRT}/split=split_${SPLIT}"
+	dirname="results/test/arch=resnet-${LAYERS}/data=${DATA}/shot=shot_${SHOT}/ckpt=${CKPT}/refine=${REFINE}/multisprt=${MULTISPRT}/split=split_${SPLIT}"
 	mkdir -p -- "$dirname"
 	python3 -m src.$run --config config_files/${DATA}.yaml \
 						--opts train_split ${SPLIT} \

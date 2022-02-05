@@ -554,4 +554,8 @@ if __name__ == "__main__":
         except KeyboardInterrupt:
             print('Interrupted')
             print('Killing processes Explicitly')
-            os.system("kill $(ps ux | grep multiprocessing.spawn | grep -v grep | awk '{print $2}') ")
+
+            cleanup()
+            wandb.finish()
+
+            #os.system("kill $(ps ux | grep multiprocessing.spawn | grep -v grep | awk '{print $2}') ")

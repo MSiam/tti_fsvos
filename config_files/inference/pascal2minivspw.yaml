@@ -94,6 +94,7 @@ CLASSIFIER:
   refine_keyframes_ftune: True
   refine_iter: 10
   refine_oracle: False
+  keyframe_criteria: keyframe_sprt
 
 DISTRIBUTED:
   gpus: [0]

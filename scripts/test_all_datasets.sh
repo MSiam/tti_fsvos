@@ -1,5 +1,5 @@
 # Pascal2MiniVSPW w/o + with Keyframe refinement
-bash scripts/test_all.sh inference/pascal2minivspw [1] model_ckpt/ False False
+#bash scripts/test_all.sh inference/pascal2minivspw [1] model_ckpt/ False False
 bash scripts/test_all.sh inference/pascal2minivspw [1] model_ckpt/ True False
 
 # Youtube-VIS V1 (Single Support set per class) w/o + with Keyframe refinement + DCL
