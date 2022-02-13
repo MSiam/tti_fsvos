@@ -11,21 +11,12 @@ ARCHS="50"
 VCWINS="[3,5,7,9,11]"
 TESTNUM="10000"
 
+bsz_val="100"
+
 for LAYERS in $ARCHS
 do
     for SHOT in $SHOTS
     do
-        if [ $SHOT == 1 ]
-        then
-           bsz_val="100"
-        elif [ $SHOT == 5 ]
-        then
-           bsz_val="50"
-        elif [ $SHOT == 10 ]
-        then
-           bsz_val="20"
-        fi
-        
         for METHOD in $METHODS
         do
             if [[ "$METHOD" == "ftune" ]]; then
