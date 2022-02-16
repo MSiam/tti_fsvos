@@ -7,10 +7,6 @@ from .resnet import resnet50, resnet101
 from .vgg import vgg16_bn
 
 
-def get_model(args) -> nn.Module:
-    return PSPNet(args, zoom_factor=8, use_ppm=True)
-
-
 class PPM(nn.Module):
     def __init__(self, in_dim, reduction_dim, bins):
         super(PPM, self).__init__()
@@ -71,6 +67,10 @@ class PSPNet(nn.Module):
         self.use_ppm = use_ppm
         self.m_scale = args.m_scale
         self.bottleneck_dim = args.bottleneck_dim
+        if hasattr(args, 'pretrain_cl'):
+            self.pretrain_cl = args.pretrain_cl
+        else:
+            self.pretrain_cl = False
 
         if args.arch == 'resnet':
             if args.layers == 50:
@@ -109,7 +109,27 @@ class PSPNet(nn.Module):
                 nn.BatchNorm2d(self.bottleneck_dim),
                 nn.ReLU(inplace=True),
                 nn.Dropout2d(p=args.dropout))
-        self.classifier = nn.Conv2d(self.bottleneck_dim, args.num_classes_tr, kernel_size=1)
+
+        if not self.pretrain_cl:
+            self.classifier = nn.Conv2d(self.bottleneck_dim, args.num_classes_tr, kernel_size=1)
+
+        if hasattr(args, 'cl_dim'):
+            self.avg_pool = nn.AdaptiveAvgPool2d((7, 7))
+            self.cl_proj_head = nn.Sequential(
+                    nn.Conv2d(args.cl_in_channels, args.cl_dim, kernel_size=1, padding=1, bias=False),
+                    nn.BatchNorm2d(args.cl_dim),
+                    nn.ReLU(inplace=True),
+                    nn.Conv2d(args.cl_dim, args.cl_dim, kernel_size=1, padding=1, bias=False),
+                    )
+
+    def get_backbone_modules(self):
+        return [self.layer0, self.layer1, self.layer2, self.layer3, self.layer4]
+
+    def get_new_modules(self):
+        if self.use_ppm:
+            return [self.ppm, self.bottleneck, self.classifier]
+        else:
+            return [self.bottleneck, self.classifier]
 
     def set_feature_res(self, size):
         self.feature_res = (int(np.ceil(size[0]/8.0)), int(np.ceil(size[1]/8.0)))
@@ -119,57 +139,60 @@ class PSPNet(nn.Module):
             if not isinstance(m, nn.BatchNorm2d):
                 m.eval()
 
-    def forward(self, x):
+    def forward(self, x, avg_pool=False, projection=False, interm=False):
         x_size = x.size()
         assert (x_size[2]-1) % 8 == 0 and (x_size[3]-1) % 8 == 0
         H = int((x_size[2] - 1) / 8 * self.zoom_factor + 1)
         W = int((x_size[3] - 1) / 8 * self.zoom_factor + 1)
 
-        x = self.extract_features(x)
-        x = self.classify(x, (H, W))
+        x = self.extract_features(x, avg_pool=avg_pool, projection=projection, interm=interm)
+        if len(x) == 2:
+            x, extras = x
+        else:
+            extras = None
+
+        if not self.pretrain_cl:
+            x = self.classify(x, (H, W))
+
+        if extras is None:
+            return x
+        else:
+            return x, extras
+
+    def cl_proj(self, x, avg_pool=False):
+        if avg_pool:
+            x = self.avg_pool(x)
+        x = self.cl_proj_head(x)
         return x
 
-    def extract_features(self, x):
+    def extract_features(self, x, avg_pool=False, projection=False, interm=False):
         x = self.layer0(x)
         x = self.layer1(x)
         x_2 = self.layer2(x)
         x_3 = self.layer3(x_2)
+        if interm:
+            interm_feats = x_3
         if self.m_scale:
             x = torch.cat([x_2, x_3], dim=1)
         else:
             x = self.layer4(x_3)
-        x = self.ppm(x)
+
+        if self.use_ppm:
+            x = self.ppm(x)
         x = self.bottleneck(x)
-        return x
+
+        if interm:
+            if projection:
+                return x, self.cl_proj(interm_feats, avg_pool=avg_pool)
+            else:
+                return x, interm_feats
+        elif projection:
+            return x, self.cl_proj(x, avg_pool=avg_pool)
+        else:
+            return x
 
     def classify(self, features, shape):
         x = self.classifier(features)
         if self.zoom_factor != 1:
             x = F.interpolate(x, size=shape, mode='bilinear', align_corners=True)
         return x
-
-    def aggregate_feats_flow(self, feats: torch.tensor, flow: torch.tensor):
-        feats = torch.stack(feats).squeeze(1)
-        flow = torch.stack(flow).squeeze(1)
-
-        feat_shape = feats.shape[-2:]
-        identity_grid = np.meshgrid(np.linspace(-1, 1, feat_shape[1]), np.linspace(-1, 1, feat_shape[0]))
-        identity_grid = torch.tensor(identity_grid).float().cuda()
-        identity_grid = identity_grid.permute(1,2,0).unsqueeze(0)
-
-        warping_flow = F.interpolate(flow, feat_shape, mode='bilinear', align_corners=True)
-        warping_flow = warping_flow.permute(0, 2, 3, 1)
-        warping_flow_normalize = copy.deepcopy(warping_flow).float()
-        warping_flow_normalize[:, :, :, 0] = warping_flow[:, :, :, 0] / feat_shape[1]
-        warping_flow_normalize[:, :, :, 1] = warping_flow[:, :, :, 1] / feat_shape[0]
-
-        warped_feats = [feats[-1]]
-        nframes = feats.shape[0]
-        for i in range(nframes-1):
-            interm_feat = feats[i].unsqueeze(0)
-            for j in range(i, nframes-1):
-                interm_feat = F.grid_sample(interm_feat,
-                                            identity_grid - warping_flow_normalize[j].unsqueeze(0))
-
-            warped_feats.append(interm_feat.squeeze(0))
-        return torch.stack(warped_feats).mean(dim=0, keepdims=True)

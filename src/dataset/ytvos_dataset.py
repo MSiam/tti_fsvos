@@ -1,3 +1,5 @@
+import torch
+import cv2
 from pycocotools.ytvos import YTVOS
 from torch.utils.data import Dataset
 import os
@@ -6,6 +8,7 @@ import random
 from PIL import Image
 import src.dataset.ytvos_transform as transform
 import argparse
+from src.dataset.aux_dataset import YTVOSAuxiliaryData
 
 class YTVOSBase(Dataset):
     def __init__(self,
@@ -91,6 +94,7 @@ class YTVOSStandard(YTVOSBase):
     def __init__(self, **kwargs):
         super(YTVOSStandard, self).__init__(**kwargs)
         # In standard training training and val classes are the same
+        self.nrep = 10
         self.class_list = self.train_list
         self.support_frame = 0
         self.load_class_list_vids()
@@ -102,6 +106,13 @@ class YTVOSStandard(YTVOSBase):
             train_video_ids += [v for v in vids[:n] if v not in val_video_ids]
             val_video_ids += [v for v in vids[n:] if v not in train_video_ids]
 
+        self.use_aux = False
+        args = kwargs['args']
+        if hasattr(args, 'aux_train_name') and self.train:
+            self.use_aux = True
+            # For the Auxiliary dataset only images are used and thus can use the val set
+            self.aux_train_data = YTVOSAuxiliaryData(transform=kwargs['transform'], args=kwargs['args'],
+                                                    class_list=self.valid_list)
 
         assert len(np.intersect1d(val_video_ids, train_video_ids)) == 0, \
                     "Train and Val seqs no intersection"
@@ -122,7 +133,13 @@ class YTVOSStandard(YTVOSBase):
         if self.transform is not None:
             frames, masks = self.transform(frames, masks)
         masks = masks[:, 0].long()
-        return frames, masks
+
+        if self.use_aux:
+            aux_frames, aux_labels, _ = self.aux_train_data.__getitem__(idx)
+            frames = {'aux_images': aux_frames, 'images': frames}
+            masks = {'aux_labels': aux_labels, 'labels': masks}
+
+        return frames, masks, self.use_aux
 
     def get_frames_labels(self, vid):
         vid_info = self.vid_infos[vid]
@@ -169,7 +186,7 @@ class YTVOSStandard(YTVOSBase):
         return frames, masks
 
     def __len__(self):
-        return len(self.combined_video_ids) * 10
+        return len(self.combined_video_ids) * self.nrep
 
 class YTVOSEpisodic(YTVOSBase):
     def __init__(self,
@@ -179,15 +196,18 @@ class YTVOSEpisodic(YTVOSBase):
         super(YTVOSEpisodic, self).__init__(transform=transform,
                                             train=train,
                                             args=args)
-
         self.support_frame = args.shot
         self.query_frame = args.query_frame
         self.sample_per_class = args.sample_per_class
 
+        self.multi_rnd_sprt = False
+        if hasattr(args, 'multi_rnd_sprt'):
+            self.multi_rnd_sprt = args.multi_rnd_sprt
+
         self.load_class_list_vids()
 
         if self.train:
-            self.length = len(self.class_list) * sample_per_class
+            self.length = len(self.class_list) * self.sample_per_class
         else:
             self.length = len(self.test_video_classes)  # test
 
@@ -222,6 +242,8 @@ class YTVOSEpisodic(YTVOSBase):
                         choice_frame.append(frame_list[frame_len - 1])
         frames = [np.array(Image.open(os.path.join(self.img_dir, vid_info['file_names'][frame_idx]))) for frame_idx in
                   choice_frame]
+        paths = [os.path.join(self.img_dir, vid_info['file_names'][frame_idx]) for frame_idx in choice_frame]
+
         masks = []
         for frame_id in choice_frame:
             object_ids = vid_info['objects'][frame_id]
@@ -243,7 +265,7 @@ class YTVOSEpisodic(YTVOSBase):
             mask[mask > 0] = 1
             masks.append(mask)
 
-        return frames, masks
+        return frames, masks, paths
 
     def __gettrainitem__(self, idx):
         list_id = idx // self.sample_per_class
@@ -252,31 +274,42 @@ class YTVOSEpisodic(YTVOSBase):
         query_vid = random.sample(vid_set, 1)
         support_vid = random.sample(vid_set, self.support_frame)
 
-        query_frames, query_masks = self.get_GT_byclass(query_vid[0], self.class_list[list_id], self.query_frame)
+        query_frames, query_masks, _ = self.get_GT_byclass(query_vid[0], self.class_list[list_id], self.query_frame)
 
-        support_frames, support_masks = [], []
+        support_frames, support_masks, sprt_paths = [], [], []
         for i in range(self.support_frame):
-            one_frame, one_mask = self.get_GT_byclass(support_vid[i], self.class_list[list_id], 1)
+            one_frame, one_mask, one_path = self.get_GT_byclass(support_vid[i], self.class_list[list_id], 1)
             support_frames += one_frame
             support_masks += one_mask
+            sprt_paths += one_path
 
         if self.transform is not None:
             query_frames, query_masks = self.transform(query_frames, query_masks)
             support_frames, support_masks = self.transform(support_frames, support_masks)
-        return query_frames, query_masks, support_frames, support_masks, self.class_list[list_id]
+
+        query_masks = query_masks.squeeze(1).long()
+        support_masks = support_masks.squeeze(1).long()
+        return query_frames, query_masks, support_frames, support_masks, self.class_list[list_id], [], []
 
     def __gettestitem__(self, idx):
         # random.seed()
-        begin_new = False
-        if idx == 0:
+        if self.multi_rnd_sprt:
+            # Ensures random support set with each sequence
             begin_new = True
         else:
-            if self.test_video_classes[idx] != self.test_video_classes[idx - 1]:
+            # What DANet performs
+            # Ensures random support set with all seqs per class
+            begin_new = False
+            if idx == 0:
                 begin_new = True
+            else:
+                if self.test_video_classes[idx] != self.test_video_classes[idx - 1]:
+                    begin_new = True
+
         list_id = self.test_video_classes[idx]
         vid_set = self.video_ids[list_id]
 
-        support_frames, support_masks = [], []
+        support_frames, support_masks, sprt_paths = [], [], []
         if begin_new:
             support_vid = random.sample(vid_set, self.support_frame)
             query_vids = []
@@ -286,26 +319,33 @@ class YTVOSEpisodic(YTVOSBase):
             self.query_ids = query_vids
             self.query_idx = -1
             for i in range(self.support_frame):
-                one_frame, one_mask = self.get_GT_byclass(support_vid[i], self.class_list[list_id], 1)
+                one_frame, one_mask, one_path = self.get_GT_byclass(support_vid[i], self.class_list[list_id], 1)
                 support_frames += one_frame
                 support_masks += one_mask
+                sprt_paths += one_path
         else:
-            support_frames, support_masks = self.sequence_support
+            support_frames, support_masks, sprt_paths = self.sequence_support
 
-        self.query_idx += 1
-        query_vid = self.query_ids[self.query_idx]
-        query_frames, query_masks = self.get_GT_byclass(query_vid, self.class_list[list_id], test=True)
+        if self.multi_rnd_sprt:
+            query_vid = random.choice(self.query_ids)
+        else:
+            self.query_idx += 1
+            query_vid = self.query_ids[self.query_idx]
+
+        query_frames, query_masks, _ = self.get_GT_byclass(query_vid, self.class_list[list_id], test=True)
         if self.transform is not None:
             query_frames, query_masks = self.transform(query_frames, query_masks)
+            # TODO: remove AddAxis from transforms
             query_masks = query_masks.squeeze(1).long() # squeeze channel 1 -> N x H x W
+
             if begin_new:
                 support_frames, support_masks = self.transform(support_frames, support_masks)
                 support_masks = support_masks.squeeze(1).long() # squeeze channel 1 -> K x H x W
-                self.sequence_support = (support_frames, support_masks)
+                self.sequence_support = (support_frames, support_masks, sprt_paths)
 
         vid_info = self.vid_infos[query_vid]
         vid_name = vid_info['dir']
-        return query_frames, query_masks, support_frames, support_masks, self.class_list[list_id], vid_name, []
+        return query_frames, query_masks, support_frames, support_masks, self.class_list[list_id], vid_name, sprt_paths
 
     def __getitem__(self, idx):
         if self.train:

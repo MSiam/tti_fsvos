@@ -90,21 +90,31 @@ class Normalize(object):
 
 class Resize(object):
     # Resize the input to the given size, 'size' is a 2-element tuple or list in the order of (h, w).
-    def __init__(self, size, padding=None):
+    def __init__(self, size, padding=None, edge_aspratio='longest'):
         self.size = size
         self.padding = padding
+        self.edge_aspratio = edge_aspratio
 
     def __call__(self, image, label, flow=None):
-
-        def find_new_hw(ori_h, ori_w, test_size):
-            if ori_h >= ori_w:
-                ratio = test_size * 1.0 / ori_h
-                new_h = test_size
-                new_w = int(ori_w * ratio)
-            elif ori_w > ori_h:
-                ratio = test_size * 1.0 / ori_w
-                new_h = int(ori_h * ratio)
-                new_w = test_size
+        def find_new_hw(ori_h, ori_w, test_size, edge_aspratio='longest'):
+            if edge_aspratio == 'longest':
+                if ori_h >= ori_w:
+                    ratio = test_size * 1.0 / ori_h
+                    new_h = test_size
+                    new_w = int(ori_w * ratio)
+                elif ori_w > ori_h:
+                    ratio = test_size * 1.0 / ori_w
+                    new_h = int(ori_h * ratio)
+                    new_w = test_size
+            else:
+                if ori_h <= ori_w:
+                    ratio = test_size * 1.0 / ori_h
+                    new_h = test_size
+                    new_w = int(ori_w * ratio)
+                elif ori_w < ori_h:
+                    ratio = test_size * 1.0 / ori_w
+                    new_h = int(ori_h * ratio)
+                    new_w = test_size
 
             if new_h % 8 != 0:
                 new_h = (int(new_h / 8)) * 8
@@ -119,7 +129,7 @@ class Resize(object):
         # Step 1: resize while keeping the h/w ratio. The largest side (i.e height or width) is reduced to $size.
         #                                             The other is reduced accordingly
         test_size = self.size
-        new_h, new_w = find_new_hw(image.shape[0], image.shape[1], test_size)
+        new_h, new_w = find_new_hw(image.shape[0], image.shape[1], test_size, self.edge_aspratio)
 
         image_crop = cv2.resize(image, dsize=(int(new_w), int(new_h)),
                                 interpolation=cv2.INTER_LINEAR)
@@ -129,15 +139,20 @@ class Resize(object):
                                     interpolation=cv2.INTER_LINEAR)
 
         # Step 2: Pad wtih 0 whatever needs to be padded to get a ($size, $size) image
-        back_crop = np.zeros((test_size, test_size, 3))
-        if self.padding:
-            back_crop[:, :, 0] = self.padding[0]
-            back_crop[:, :, 1] = self.padding[1]
-            back_crop[:, :, 2] = self.padding[2]
-        back_crop[:new_h, :new_w, :] = image_crop
-        image = back_crop
+        if self.edge_aspratio == 'longest':
+            back_crop = np.zeros((test_size, test_size, 3))
+
+            if self.padding:
+                back_crop[:, :, 0] = self.padding[0]
+                back_crop[:, :, 1] = self.padding[1]
+                back_crop[:, :, 2] = self.padding[2]
+            back_crop[:new_h, :new_w, :] = image_crop
+            image = back_crop
+        else:
+            image = image_crop
 
         if flow is not None:
+            assert self.edge_aspratio == 'longest', "Not implemented for Flow"
             back_crop_flow = np.zeros((test_size, test_size, 2))
             if self.padding:
                 back_crop_flow[:, :, 0] = self.padding[0]
@@ -149,13 +164,15 @@ class Resize(object):
         # Step 3: Do the same for the label (the padding is 255)
         if label is not None:
             s_mask = label
-            new_h, new_w = find_new_hw(s_mask.shape[0], s_mask.shape[1], test_size)
+            new_h, new_w = find_new_hw(s_mask.shape[0], s_mask.shape[1], test_size, self.edge_aspratio)
             s_mask = cv2.resize(s_mask.astype(np.float32), dsize=(int(new_w), int(new_h)),
                                 interpolation=cv2.INTER_NEAREST)
-            back_crop_s_mask = np.ones((test_size, test_size)) * 255
-            back_crop_s_mask[:new_h, :new_w] = s_mask
-            label = back_crop_s_mask
-
+            if self.edge_aspratio == 'longest':
+                back_crop_s_mask = np.ones((test_size, test_size)) * 255
+                back_crop_s_mask[:new_h, :new_w] = s_mask
+                label = back_crop_s_mask
+            else:
+                label = s_mask
             return image, label, flow
         else:
             return image, new_h, new_w

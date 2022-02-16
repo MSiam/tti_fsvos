@@ -11,26 +11,40 @@ import torch
 
 from .utils import make_dataset
 import src.dataset.transform as transform
+from src.dataset.aux_dataset import VSPWAuxiliaryData
 
 class StandardData(Dataset):
     def __init__(self, args: argparse.Namespace,
                  transform: transform.Compose,
                  data_list_path: str,
                  class_list: List[int],
-                 return_paths: bool):
+                 return_paths: bool,
+                 train: bool = True):
         self.data_root = args.data_root
         self.class_list = class_list
-        self.data_list, _ = make_dataset(args.data_root, data_list_path, class_list)
+        self.data_list, _ = self.load_filenames(args.data_root, data_list_path, class_list)
         self.transform = transform
         self.return_paths = return_paths
+
+        if hasattr(args, 'aux_train_name') and train:
+            self.use_aux = True
+            self.aux_train_data = VSPWAuxiliaryData(transform=transform, args=args)
+        else:
+            self.use_aux = False
+
+    def load_filenames(self, data_root, data_list_path,class_list):
+        return make_dataset(data_root, data_list_path, class_list)
 
     def __len__(self):
         return len(self.data_list)
 
+    def reset_indices(self):
+        self.aux_train_data.reset_indices()
+
     def __getitem__(self, index):
 
         label_class = []
-        image_path, label_path = self.data_list[index]
+        image_path, label_path = self.data_list[index%len(self.data_list)]
         image = cv2.imread(image_path, cv2.IMREAD_COLOR)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         image = np.float32(image)
@@ -66,10 +80,16 @@ class StandardData(Dataset):
 
         if self.transform is not None:
             image, new_label = self.transform(image, new_label)
+
+        if self.use_aux:
+            aux_images, aux_labels, _ = self.aux_train_data.__getitem__(index)
+            image = {'aux_images': aux_images, 'images': image}
+            new_label = {'aux_labels': aux_labels, 'labels': new_label}
+
         if self.return_paths:
             return image, new_label, image_path, label_path
         else:
-            return image, new_label
+            return image, new_label, self.use_aux
 
 
 class EpisodicData(Dataset):
@@ -83,8 +103,11 @@ class EpisodicData(Dataset):
         self.random_shot = args.random_shot
         self.data_root = args.data_root
         self.class_list = class_list
-        self.data_list, self.sub_class_file_list = make_dataset(args.data_root, data_list_path, self.class_list)
+        self.data_list, self.sub_class_file_list = self.load_filenames(args.data_root, data_list_path, self.class_list)
         self.transform = transform
+
+    def load_filenames(self, data_root, data_list_path, class_list):
+        return make_dataset(data_root, data_list_path, class_list)
 
     def __len__(self):
         return len(self.data_list)

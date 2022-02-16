@@ -9,7 +9,6 @@ import numpy as np
 import torch
 import pickle
 
-from src.dataset.tao import Tao
 from src.dataset.static_dataset import EpisodicData
 import src.dataset.transform as transform
 
@@ -34,8 +33,6 @@ class EpisodicTemporalData(EpisodicData):
         self.sequence_support = None
         self.class_chosen = None
 
-        self.flow_aggregation = args.flow_aggregation
-
     def _load_class_mapping(self, class_mapping_file):
         with open(class_mapping_file, "r") as f:
             class_mapping = json.load(f)
@@ -50,8 +47,6 @@ class EpisodicTemporalData(EpisodicData):
         # ================== Load Query ========================
         image, image_path, pick_new_support = self._load_image(image_id)
         label_class, label = self._get_label(image_id, image.shape)
-        if self.flow_aggregation:
-            flow, flow_path = self._load_flow(image_id)
 
         if pick_new_support:
             self.class_chosen = np.random.choice(label_class)
@@ -67,11 +62,7 @@ class EpisodicTemporalData(EpisodicData):
 
             # == Forward images through transforms =================
             if self.transform is not None:
-                if self.flow_aggregation:
-                    qry_img, target, qry_flow = self.transform(image, label, flow)
-                    qry_img = {'image': qry_img, 'flow': qry_flow}
-                else:
-                    qry_img, target = self.transform(image, label)
+                qry_img, target = self.transform(image, label)
                 for k in range(shot):
                     support_image_list[k], support_label_list[k] = self.transform(support_image_list[k], support_label_list[k])
                     support_image_list[k] = support_image_list[k].unsqueeze(0)
@@ -84,11 +75,7 @@ class EpisodicTemporalData(EpisodicData):
             self.sequence_support = (spprt_imgs, spprt_labels, subcls_list, support_image_path_list)
         else:
             if self.transform is not None:
-                if self.flow_aggregation:
-                    qry_img, target, qry_flow = self.transform(image, label, flow)
-                    qry_img = {'image': qry_img, 'flow': qry_flow}
-                else:
-                    qry_img, target = self.transform(image, label)
+                qry_img, target = self.transform(image, label)
 
             spprt_imgs, spprt_labels, subcls_list, support_image_path_list = self.sequence_support
 
@@ -97,114 +84,6 @@ class EpisodicTemporalData(EpisodicData):
 
     def __len__(self):
         return len(self.img_list)
-
-class TAOEpisodicTemporalData(EpisodicTemporalData):
-    def __init__(self,
-                 transform: transform.Compose,
-                 class_list: List[int],
-                 data_list_path: str,
-                 args: argparse.Namespace):
-
-        super(TAOEpisodicTemporalData, self).__init__(transform, class_list, data_list_path, args)
-        annotation_file = os.path.join(self.root, 'annotations/train_val.json')
-        self.tao_dataset = Tao(annotation_file)
-
-        self.ignore_seqs = ["val/HACS/Brushing_teeth_v_cA1LLOqPy0A_scene_0_0-3785/",
-                            "val/YFCC100M/v_8681f64baa7794ce3aafe2fa485a9c/"]
-        # Select Ehaustively Labelled Videos
-        self.exhaustive_vid_ids = []
-        for _, video in self.tao_dataset.vids.items():
-            if len(video["not_exhaustive_category_ids"]) == 0:
-                self.exhaustive_vid_ids.append(video["id"])
-
-        # Create Dictionary Mapping Vids -> Cat
-        self.tao_dataset.class_mapping = self._load_class_mapping(args.class_mapping)
-        self.img_list = self._create_list()
-
-    def _create_dict_map(self, classes):
-        """
-        Create Videos by Category Dictionary for Sampling Sprt/Qry
-        """
-        cats_by_vid = {}
-        vids_by_cat = {}
-
-        annot_ids = self.tao_dataset.get_ann_ids(vid_ids=self.exhaustive_vid_ids)
-        annots = self.tao_dataset.load_anns(ids=annot_ids)
-
-        # vids_by_cat: Create Dictioinary Key: Category Name, Value: Array of Vid Ids
-        # cats_by_vid: Create Dictioinary Key: Video ID, Value: Array of Categoriy Ids
-        for annot in annots:
-            cat_name = self.tao_dataset.get_name_from_id(annot["category_id"])
-            if cat_name not in classes:
-                continue
-
-            video_info = self.tao_dataset.vids[annot["video_id"]]
-            if annot["video_id"] not in cats_by_vid:
-                cats_by_vid[annot["video_id"]] = set()
-            cats_by_vid[annot["video_id"]].add(annot["category_id"])
-
-            if cat_name not in vids_by_cat:
-                vids_by_cat[cat_name] = []
-            vids_by_cat[cat_name].append(annot["video_id"])
-
-        return vids_by_cat
-
-    def _create_list(self):
-        vids_by_cat = self._create_dict_map(self.external_classes)
-
-        annots_by_img = SortedDict()
-
-        for key, value in vids_by_cat.items():
-            annot_ids = self.tao_dataset.get_ann_ids(vid_ids=value)
-            annots = self.tao_dataset.load_anns(annot_ids)
-            for annot in annots:
-                cat_name = self.tao_dataset.get_name_from_id(annot["category_id"])
-                if cat_name not in self.current_external_classes:
-                    continue
-
-                if annot["image_id"] not in annots_by_img:
-                    annots_by_img[annot["image_id"]] = []
-                annots_by_img[annot["image_id"]].append(annot)
-
-        self.annots_by_img = annots_by_img
-        return list(annots_by_img.keys())
-
-    def _convert_bb_mask(self, annots, image_size):
-        label_class = []
-        mask = np.zeros(image_size)
-
-        for annot in annots:
-            cat_name = self.tao_dataset.get_name_from_id(annot["category_id"])
-            class_idx = self.external_classes.index(cat_name) + 1
-            label_class.append(class_idx)
-
-            bb = [int(b) for b in annot["bbox"]]
-            mask[bb[1]:bb[1]+bb[3], bb[0]:bb[0]+bb[2]] = class_idx
-
-        return np.unique(label_class), mask
-
-    def _load_image(self, image_id):
-        image_info = self.tao_dataset.load_imgs([image_id])[0]
-        image_path = os.path.join(self.root, "frames", image_info["file_name"])
-        image = cv2.imread(image_path, cv2.IMREAD_COLOR)
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        image = np.float32(image)
-
-        # CHeck if sequence changed
-        pick_new_support = False
-        if self.current_sequence != image_info["video_id"]:
-            pick_new_support = True
-
-        self.current_sequence = image_info["video_id"]
-        return image, image_path, pick_new_support
-
-    def extract_seq_names(self, paths):
-        seqs = [path.split('/')[-2] for path in paths]
-        return seqs
-
-    def _get_label(self, image_id, image_shape):
-        label_class, label = self._convert_bb_mask(self.annots_by_img[image_id], image_shape[:2])
-        return label_class, label
 
 class VSPWEpisodicTemporalData(EpisodicTemporalData):
     def __init__(self,

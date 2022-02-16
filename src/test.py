@@ -15,7 +15,7 @@ from .util import AverageMeter, batch_intersectionAndUnionGPU, get_model_dir, ma
 
 from .util import find_free_port, setup, cleanup, to_one_hot, intersectionAndUnionGPU
 from .classifier import Classifier
-from .model.pspnet import get_model
+from .model.model import get_model
 import torch.distributed as dist
 from tqdm import tqdm
 from .util import load_cfg_from_cfg_file, merge_cfg_from_list
@@ -76,17 +76,23 @@ def main_worker(rank: int,
     episodic_val_loader, _ = get_val_loader(args)
 
     # ========== Test  ==========
-    val_Iou, val_loss = episodic_validate(args=args,
-                                          val_loader=episodic_val_loader,
-                                          model=model,
-                                          use_callback=(args.visdom_port != -1),
-                                          suffix=f'test')
+    if args.episodic_val or args.temporal_episodic_val > 0:
+        val_Iou, val_loss = episodic_validate(args=args,
+                                              val_loader=episodic_val_loader,
+                                              model=model,
+                                              use_callback=(args.visdom_port != -1),
+                                              suffix=f'test')
+    else:
+        val_Iou, val_loss = standard_validate(args=args,
+                                              val_loader=episodic_val_loader,
+                                              model=model,
+                                              use_callback=(args.visdom_port != -1),
+                                              suffix=f'test')
+
     if args.distributed:
         dist.all_reduce(val_Iou), dist.all_reduce(val_loss)
         val_Iou /= world_size
         val_loss /= world_size
-
-    #cleanup()
 
 
 def episodic_validate(args: argparse.Namespace,
@@ -100,6 +106,9 @@ def episodic_validate(args: argparse.Namespace,
     model.eval()
     nb_episodes = int(args.test_num / args.batch_size_val)
 
+    if not hasattr(args, 'vc_wins'):
+        args.vc_wins = [15]
+
     # ========== Metrics initialization  ==========
 
     H, W = args.image_size, args.image_size
@@ -112,7 +121,7 @@ def episodic_validate(args: argparse.Namespace,
     deltas_final = torch.zeros((args.n_runs, nb_episodes, args.batch_size_val))
     val_IoUs = np.zeros(args.n_runs)
     val_Fscores = np.zeros(args.n_runs)
-    val_VCs = np.zeros(args.n_runs)
+    val_VCs = {kwin: np.zeros(args.n_runs) for kwin in args.vc_wins}
     val_losses = np.zeros(args.n_runs)
 
     if args.weights == [1, 'auto', 'auto', 0]:
@@ -121,6 +130,9 @@ def episodic_validate(args: argparse.Namespace,
         method = "tti"
     else:
         raise NotImplementedError()
+
+    if not hasattr(args, 'single_proto_flag'):
+        args.single_proto_flag = False
 
     # ========== Perform the runs  ==========
     for run in tqdm(range(args.n_runs)):
@@ -137,12 +149,19 @@ def episodic_validate(args: argparse.Namespace,
         IoU = defaultdict(int)
         Fscores = defaultdict(int)
 
+        # Enable interm feature extraction if using encoder/decoder method similar to Dlab V3+
+        interm_flag = True if hasattr(args, 'encdec_flag') and args.encdec_flag else False
+
         # =============== episode = group of tasks ===============
         runtime = 0
         for e in tqdm(range(nb_episodes)):
             t0 = time.time()
             features_s = torch.zeros(args.batch_size_val, args.shot, c, h, w).to(dist.get_rank())
             features_q = torch.zeros(args.batch_size_val, 1, c, h, w).to(dist.get_rank())
+            if interm_flag:
+                interm_features_s = torch.zeros(args.batch_size_val, args.shot, c, h, w).to(dist.get_rank())
+                interm_features_q = torch.zeros(args.batch_size_val, args.shot, c, h, w).to(dist.get_rank())
+
             aggregated_feats = torch.zeros(args.batch_size_val, 1, c, h, w).to(dist.get_rank())
             gt_s = 255 * torch.ones(args.batch_size_val, args.shot, args.image_size,
                                     args.image_size).long().to(dist.get_rank())
@@ -167,32 +186,19 @@ def episodic_validate(args: argparse.Namespace,
                         qry_img, q_label, spprt_imgs, s_label, subcls, sprt_paths, paths = iter_loader.next()
                     iter_num += 1
 
-                    if args.flow_aggregation:
-                        qry_flow = qry_img['flow']
-                        qry_img = qry_img['image']
-
                     q_label = q_label.to(dist.get_rank(), non_blocking=True)
                     spprt_imgs = spprt_imgs.to(dist.get_rank(), non_blocking=True)
                     s_label = s_label.to(dist.get_rank(), non_blocking=True)
                     qry_img = qry_img.to(dist.get_rank(), non_blocking=True)
 
-                    f_s = model.module.extract_features(spprt_imgs.squeeze(0))
-                    f_q = model.module.extract_features(qry_img)
+                    f_s = model.module.extract_features(spprt_imgs.squeeze(0), interm=interm_flag)
+                    f_q = model.module.extract_features(qry_img, interm=interm_flag)
+                    if interm_flag:
+                        f_s, interm_f_s = f_s
+                        f_q, interm_f_q = f_q
 
-                    ############################ Feature Aggregation with Flow Warping ####################
-                    if args.flow_aggregation:
-                        qry_flow = qry_flow.to(dist.get_rank(), non_blocking=True)
-                        queue['feat'].append(f_q.detach())
-                        queue['flow'].append(qry_flow)
-
-                        if len(queue['feat']) == time_window:
-                            queue['feat'].pop(0)
-                            queue['flow'].pop(0)
-
-                        if i < time_window:
-                            aggregated_feats[i] = f_q
-                        else:
-                            aggregated_feats[i] = model.module.aggregate_feats_flow(queue['feat'], queue['flow'])
+                        interm_f_s = interm_f_s.detach()
+                        interm_f_q = interm_f_q.detach()
 
                     shot = f_s.size(0)
                     n_shots[i] = shot
@@ -213,11 +219,6 @@ def episodic_validate(args: argparse.Namespace,
                         all_qry['imgs'].append(qry_img[0].cpu().numpy())
                         all_qry['masks'].append(q_label[0].cpu().numpy())
                         all_qry['paths'].append(paths[0])
-                        if args.flow_aggregation:
-                            all_qry['flows'].append(qry_flow[0].cpu().numpy())
-
-            if args.flow_aggregation:
-                features_q = aggregated_feats
 
             # =========== Normalize features along channel dimension ===============
             if args.norm_feat:
@@ -229,29 +230,44 @@ def episodic_validate(args: argparse.Namespace,
 
             # ===========  Initialize the classifier + prototypes + F/B parameter Π ===============
             classifier = Classifier(args)
-            classifier.init_prototypes(features_s, features_q, gt_s, gt_q, classes, callback)
-            batch_deltas = classifier.compute_FB_param(features_q=features_q, gt_q=gt_q)
+            classifier.init_prototypes(features_s, features_q, gt_s, gt_q, classes, callback, seqs=seqs)
+            batch_deltas = classifier.compute_FB_param(features_q=features_q, gt_q=gt_q, seqs=seqs)
             deltas_init[run, e, :] = batch_deltas.cpu()
 
-            # =========== Perform RePRI inference ===============
-            batch_deltas = classifier.RePRI(features_s, features_q, gt_s, gt_q, classes, n_shots, seqs, callback)
+            # =========== Perform TTI inference ===============
+            batch_deltas = classifier.TTI(features_s, features_q, gt_s, gt_q, classes, n_shots, seqs, callback)
             deltas_final[run, e, :] = batch_deltas
             t1 = time.time()
             runtime += t1 - t0
-            logits = classifier.get_logits(features_q)  # [n_tasks, shot, h, w]
+            logits = classifier.get_logits(features_q, seqs=seqs)  # [n_tasks, shot, h, w]
             logits = F.interpolate(logits,
                                    size=(H, W),
                                    mode='bilinear',
                                    align_corners=True)
             probas = classifier.get_probas(logits).detach()
+
+            if args.refine_keyframes_ftune and method == "tti":
+                # gt_q is only used to identify valid pixels and remove ones from padding for aug.
+                classifier.ftune_selected_keyframe(all_probas=probas, all_f_q=features_q, all_f_s=features_s,
+                                                   all_gt_s=gt_s, all_gt_q=gt_q, seqs=seqs,
+                                                   refine_oracle=args.refine_oracle)
+                logits = classifier.get_logits(features_q, seqs=seqs)  # [n_tasks, shot, h, w]
+                logits = F.interpolate(logits,
+                                       size=(H, W),
+                                       mode='bilinear',
+                                       align_corners=True)
+                probas = classifier.get_probas(logits).detach()
+
             intersection, union, _ = batch_intersectionAndUnionGPU(probas, gt_q, 2)  # [n_tasks, shot, num_class]
             intersection, union = intersection.cpu(), union.cpu()
 
             if args.eval_vc:
-                video_consistency = batch_vid_consistencyGPU(seqs, probas, gt_q, 2)  # [n_tasks, shot, num_class]
-                video_consistency = video_consistency.cpu()
+                # [n_tasks, shot, num_class]
+                video_consistency = batch_vid_consistencyGPU(seqs, probas, gt_q, 2,
+                                                             args.vc_size_th, args.vc_wins)
+                video_consistency = {k: v.cpu() for k, v in video_consistency.items()}
             else:
-                video_consistency = torch.zeros(len(seqs), 1, 2)
+                video_consistency = {'3': torch.zeros(len(seqs), 1, 2)}
 
             # ================== Log metrics ==================
             one_hot_gt = to_one_hot(gt_q, 2)
@@ -264,15 +280,19 @@ def episodic_validate(args: argparse.Namespace,
                 for j, class_ in enumerate(task_classes):
                     cls_intersection[class_] += intersection[i, 0, j + 1]  # Do not count background
                     cls_union[class_] += union[i, 0, j + 1]
-                    if seqs[i] not in visited_seqs:
+                    if seqs[i] not in visited_seqs:# and seqs[i] not in ignored_seqs:
                         visited_seqs.append(seqs[i])
-                        cls_vc[class_] += video_consistency[i, 0, j + 1]
+
+                        for kwin in video_consistency.keys():
+                            if kwin not in cls_vc:
+                                cls_vc[kwin] = defaultdict(int)
+                            cls_vc[kwin][class_] += video_consistency[kwin][i, 0, j + 1]
+
                         cls_n_vc[class_] += 1
 
             for class_ in cls_union:
                 IoU[class_] = cls_intersection[class_] / (cls_union[class_] + 1e-10)
                 Fscores[class_] = 2 * cls_intersection[class_] / (cls_union[class_] + cls_intersection[class_] + 1e-10)
-                cls_vc[class_] /= cls_n_vc[class_]
 
             if (iter_num % 200 == 0):
                 mIoU = np.mean([IoU[i] for i in IoU])
@@ -290,10 +310,7 @@ def episodic_validate(args: argparse.Namespace,
                     root = os.path.join('plots', 'episodes', method)
                     os.makedirs(root, exist_ok=True)
                     save_path = os.path.join(root, f'run_{run}_episode_{e}_{i:05d}.png')
-                    if args.flow_aggregation:
-                        flow_q = all_qry['flows'][i]
-                    else:
-                        flow_q = None
+                    flow_q = None
                     make_episode_visualization_cv2(img_s=all_sprt['imgs'][i],
                                                    img_q=all_qry['imgs'][i],
                                                    gt_s=all_sprt['masks'][i],
@@ -308,14 +325,26 @@ def episodic_validate(args: argparse.Namespace,
         runtimes[run] = runtime
         mIoU = np.mean(list(IoU.values()))
         fscore = np.mean(list(Fscores.values()))
-        vc = np.mean(list(cls_vc.values()))
+
+        # ============= Printing Evaluation Metrics =================
+        for kwin in cls_vc.keys():
+            for class_ in cls_vc[kwin].keys():
+               cls_vc[kwin][class_] /= (cls_n_vc[class_] + 1e-10)
+        vc_text = ' VC at wins: '
+        vc = {}
+        for kwin in cls_vc.keys():
+            vc[kwin] = np.mean(list(cls_vc[kwin].values()))
+            vc_text += '(' + str(kwin) + ',' + str(vc[kwin]) + ') '
+
         print('mIoU---Val result: mIoU {:.4f}.'.format(mIoU))
         for class_ in cls_union:
-            print("Class {} : {:.4f}".format(class_, IoU[class_]))
+            print("Class {} : {:.4f}".format(class_, IoU[class_]), vc_text)
 
         val_Fscores[run] = fscore
         val_IoUs[run] = mIoU
-        val_VCs[run] = vc
+        for kwin in vc.keys():
+            val_VCs[kwin][run] = vc[kwin]
+
         val_losses[run] = loss_meter.avg
 
     # ================== Save metrics ==================
@@ -327,7 +356,11 @@ def episodic_validate(args: argparse.Namespace,
 
     print('Average mIoU over {} runs --- {:.4f}.'.format(args.n_runs, val_IoUs.mean()))
     print('Average Fscore over {} runs --- {:.4f}.'.format(args.n_runs, val_Fscores.mean()))
-    print('Average Vconsistency over {} runs --- {:.4f}.'.format(args.n_runs, val_VCs.mean()))
+    vc_text = 'Average Vconsistency over {} runs ---'.format(args.n_runs)
+    for kwin in val_VCs.keys():
+        kwin_vc_mean = np.mean(val_VCs[kwin])
+        vc_text += ' (' + str(kwin) + ',' + str(kwin_vc_mean)+ ') '
+    print(vc_text)
     print('Average runtime / run --- {:.4f}.'.format(runtimes.mean()))
 
     return val_IoUs.mean(), val_losses.mean()
@@ -352,7 +385,7 @@ def standard_validate(args: argparse.Namespace,
 
     with torch.no_grad():
         for i in bar:
-            images, gt = iterable_val_loader.next()
+            images, gt, _ = iterable_val_loader.next()
             images = images.to(dist.get_rank(), non_blocking=True)
             gt = gt.to(dist.get_rank(), non_blocking=True)
 
@@ -378,6 +411,8 @@ def standard_validate(args: argparse.Namespace,
 
     mIoU = (intersections / (unions + 1e-10)).mean()
     loss /= dist.get_world_size()
+
+    print('Average mIoU over --- {:.4f}.'.format(mIoU))
     return mIoU, loss
 
 
@@ -391,10 +426,7 @@ if __name__ == "__main__":
 
     world_size = len(args.gpus)
     distributed = world_size > 1
+    # TODO: Cleanup unnecessary distributed in inference not used
     args.distributed = distributed
     args.port = find_free_port()
     main_worker(0, world_size, args)
-#    mp.spawn(main_worker,
-#             args=(world_size, args),
-#             nprocs=world_size,
-#             join=True)
