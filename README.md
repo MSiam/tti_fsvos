@@ -1,7 +1,7 @@
 # Temporal Transductive Inference for Few-shot Video Semantic Segmentation
 
 <div align="center">
-<img src="" width="70%" height="70%"><br><br>
+<img src="" width="40%" height="40%"><br><br>
 </div>
 
 ## Getting Started
@@ -46,6 +46,12 @@ We provide the versions of Pascal-VOC 2012 and MS-COCO 2017 used in this work at
 
 #### Download Full VSPW for MiniVSPW-to-MiniVSPW evaluation
 * use processed data from [VSPW_480](https://github.com/sssdddwww2/vspw_dataset_download)
+* Example explaining why we specificlly pick PASCAL classes and ignore background (i.e. stuff classes). We show the effect of not removing stuff classes (such as road, building, ...) during training and how it would lead to contaminating the learning process with the novel class boundaries (in our case the person class). While removing the stuff classes will ensure that does not occur which explains our choice of classes.
+
+<div align="center">
+<img src="" width="40%" height="40%"><br><br>
+</div>
+
 
 ##### Download YTVIS dataset
 * use 2019 YTVIS version similar to [DANet](https://github.com/scutpaul/DANet)
