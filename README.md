@@ -1,7 +1,7 @@
 # Temporal Transductive Inference for Few-shot Video Semantic Segmentation
 
 <div align="center">
-<img src="" width="40%" height="40%"><br><br>
+<img src="https://github.com/MSiam/tti_fsvos/blob/main/figures/tti_overview.png" width="40%" height="40%"><br><br>
 </div>
 
 ## Getting Started
@@ -49,7 +49,7 @@ We provide the versions of Pascal-VOC 2012 and MS-COCO 2017 used in this work at
 * Example explaining why we specificlly pick PASCAL classes and ignore background (i.e. stuff classes). We show the effect of not removing stuff classes (such as road, building, ...) during training and how it would lead to contaminating the learning process with the novel class boundaries (in our case the person class). While removing the stuff classes will ensure that does not occur which explains our choice of classes.
 
 <div align="center">
-<img src="" width="40%" height="40%"><br><br>
+<img src="https://github.com/MSiam/tti_fsvos/blob/main/figures/MiniVSPW_Example_Leak_Boundaries.png" width="40%" height="40%"><br><br>
 </div>
 
 
