@@ -8,4 +8,4 @@ pyyaml
 tqdm
 visdom
 cython
-https://github.com/youtubevos/cocoapi.git
+wandb
