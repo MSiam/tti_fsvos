@@ -78,7 +78,7 @@ EVALUATION:
 VISUALIZATION:
   visu: False
   visu_keyframes: False
-  vis_dir: /local/data0/plots/
+  vis_dir: /local/riemann1/home/msiam/tti_minivspw_vis
   analysis_dir: 'analysis/'
 
 CLASSIFIER:

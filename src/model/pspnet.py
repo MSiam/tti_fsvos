@@ -5,7 +5,7 @@ from torch import nn
 import torch.nn.functional as F
 from .resnet import resnet50, resnet101
 from .vgg import vgg16_bn
-
+from .video_swin import build_swin_b_backbone
 
 class PPM(nn.Module):
     def __init__(self, in_dim, reduction_dim, bins):
@@ -72,6 +72,7 @@ class PSPNet(nn.Module):
         else:
             self.pretrain_cl = False
 
+        self.arch = args.arch
         if args.arch == 'resnet':
             if args.layers == 50:
                 resnet = resnet50(pretrained=args.pretrained)
@@ -83,17 +84,23 @@ class PSPNet(nn.Module):
         elif args.arch == 'vgg':
             vgg = vgg16_bn(pretrained=args.pretrained)
             self.layer0, self.layer1, self.layer2, self.layer3, self.layer4 = get_vgg16_layer(vgg)
+        elif args.arch == 'videoswin':
+            self.videoswin_backbone = build_swin_b_backbone(
+                "/local/riemann/home/rezaul/projects/medvt2-main/pretrained/swin_base_patch244_window877_kinetics400_22k.pth"
+            )
+            self.feature_res = (8, 14)
 
-        for n, m in self.layer3.named_modules():
-            if 'conv2' in n:
-                m.dilation, m.padding, m.stride = (2, 2), (2, 2), (1, 1)
-            elif 'downsample.0' in n:
-                m.stride = (1, 1)
-        for n, m in self.layer4.named_modules():
-            if 'conv2' in n:
-                m.dilation, m.padding, m.stride = (4, 4), (4, 4), (1, 1)
-            elif 'downsample.0' in n:
-                m.stride = (1, 1)
+        if self.arch != "videoswin":
+            for n, m in self.layer3.named_modules():
+                if 'conv2' in n:
+                    m.dilation, m.padding, m.stride = (2, 2), (2, 2), (1, 1)
+                elif 'downsample.0' in n:
+                    m.stride = (1, 1)
+            for n, m in self.layer4.named_modules():
+                if 'conv2' in n:
+                    m.dilation, m.padding, m.stride = (4, 4), (4, 4), (1, 1)
+                elif 'downsample.0' in n:
+                    m.stride = (1, 1)
         if self.m_scale:
             fea_dim = 1024 + 512
         else:
@@ -101,6 +108,9 @@ class PSPNet(nn.Module):
                 fea_dim = 2048
             elif args.arch == 'vgg':
                 fea_dim = 512
+            elif args.arch == 'videoswin':
+                fea_dim = 1024
+
         if use_ppm:
             self.ppm = PPM(fea_dim, int(fea_dim/len(args.bins)), args.bins)
             fea_dim *= 2
@@ -123,7 +133,10 @@ class PSPNet(nn.Module):
                     )
 
     def get_backbone_modules(self):
-        return [self.layer0, self.layer1, self.layer2, self.layer3, self.layer4]
+        if self.arch == "videoswin":
+            return [self.videoswin_backbone]
+        else:
+            return [self.layer0, self.layer1, self.layer2, self.layer3, self.layer4]
 
     def get_new_modules(self):
         if self.use_ppm:
@@ -141,9 +154,9 @@ class PSPNet(nn.Module):
 
     def forward(self, x, avg_pool=False, projection=False, interm=False):
         x_size = x.size()
-        assert (x_size[2]-1) % 8 == 0 and (x_size[3]-1) % 8 == 0
-        H = int((x_size[2] - 1) / 8 * self.zoom_factor + 1)
-        W = int((x_size[3] - 1) / 8 * self.zoom_factor + 1)
+        assert (x_size[-2]-1) % 8 == 0 and (x_size[-1]-1) % 8 == 0
+        H = int((x_size[-2] - 1) / 8 * self.zoom_factor + 1)
+        W = int((x_size[-1] - 1) / 8 * self.zoom_factor + 1)
 
         x = self.extract_features(x, avg_pool=avg_pool, projection=projection, interm=interm)
         if len(x) == 2:
@@ -166,16 +179,21 @@ class PSPNet(nn.Module):
         return x
 
     def extract_features(self, x, avg_pool=False, projection=False, interm=False):
-        x = self.layer0(x)
-        x = self.layer1(x)
-        x_2 = self.layer2(x)
-        x_3 = self.layer3(x_2)
-        if interm:
-            interm_feats = x_3
-        if self.m_scale:
-            x = torch.cat([x_2, x_3], dim=1)
+        if self.arch == 'videoswin':
+            x = self.videoswin_backbone(x.permute(0,2,1,3,4))[-1]
+            x = x.permute(0,2,1,3,4)
+            x = x.view(-1, *x.shape[-3:])
         else:
-            x = self.layer4(x_3)
+            x = self.layer0(x)
+            x = self.layer1(x)
+            x_2 = self.layer2(x)
+            x_3 = self.layer3(x_2)
+            if interm:
+                interm_feats = x_3
+            if self.m_scale:
+                x = torch.cat([x_2, x_3], dim=1)
+            else:
+                x = self.layer4(x_3)
 
         if self.use_ppm:
             x = self.ppm(x)

@@ -5,7 +5,9 @@ LAYERS=$4
 CKPT=$5
 REFINE=$6 # Flag to perform keyframe finetuning
 MULTISPRT=$7 # Flag specific to ytvis to enable multiple support per class
+ADAPKSHOT=$8 # Flag to specify adaptive kshot
 
+NRUNS=1
 SPLITS="0 1 2 3"
 VCWINS="[3,5,7,9,11]"
 
@@ -47,7 +49,7 @@ do
 							   cls_lr 0.025 \
 							   gpus ${GPU} \
 							   test_num $test_num \
-							   n_runs 5 \
+							   n_runs $NRUNS \
                                weights "[1.0,'auto','auto','auto']"\
                                workers 0 \
                                vc_wins ${VCWINS} \
@@ -55,5 +57,6 @@ do
                                refine_keyframes_ftune ${REFINE} \
                                selected_weights [] \
                                multi_rnd_sprt ${MULTISPRT} \
+                               adap_kshot ${ADAPKSHOT} \
 							   | tee ${dirname}/log_${PI}.txt
 done

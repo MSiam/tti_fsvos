@@ -24,7 +24,7 @@ DATA:
   sprtset_as_frames: False
 
 TRAIN:
-  ckpt_path: checkpoints/
+  ckpt_path: /local/riemann1/home/msiam/minivspw_benchmark/nometalearning/
   resume_training: False
   batch_size: 6
   epochs: 10 # > 200,000 iterations
@@ -99,5 +99,5 @@ DISTRIBUTED:
 
 WANDB:
   wandb_user: 'yvv'
-  wandb_project: 'tfss'
+  wandb_project: 'minivspw'
   wandb_run_name: ''

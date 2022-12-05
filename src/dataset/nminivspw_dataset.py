@@ -167,8 +167,11 @@ class NMiniVSPWEpisodicData(EpisodicData):
 
     def _load_seq(self, seq_name, cls, files=None):
         seq_path = os.path.join(self.data_root, seq_name, 'origin')
+        if files is None:
+            self.img_dir = seq_path
         imgs = []
         masks = []
+        paths = []
 
         if files is None:
             files = [os.path.join(seq_path, fname) for fname in sorted(os.listdir(seq_path))]
@@ -180,6 +183,7 @@ class NMiniVSPWEpisodicData(EpisodicData):
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             image = np.float32(image)
             imgs.append(image)
+            paths.append(image_path)
 
             mask = cv2.imread(
                     image_path.replace('origin', 'mask').replace('jpg', 'png'), 0
@@ -188,7 +192,7 @@ class NMiniVSPWEpisodicData(EpisodicData):
             temp_mask[mask == cls] = 1
             masks.append(temp_mask)
 
-        return imgs, masks
+        return imgs, masks, paths
 
     def __getitem__(self, index):
         """
@@ -204,7 +208,8 @@ class NMiniVSPWEpisodicData(EpisodicData):
         classes = self.classes_per_seq[seq_name]
 
         chosen_class = np.random.choice(classes)
-        qry_frames, qry_masks = self._load_seq(seq_name, chosen_class)
+        qry_frames, qry_masks, _ = self._load_seq(seq_name, chosen_class)
+
         if self.transform is not None:
             qry_frames, qry_masks = self.transform(qry_frames, qry_masks)
         qry_masks = qry_masks[:, 0].long()
@@ -213,19 +218,23 @@ class NMiniVSPWEpisodicData(EpisodicData):
         selected_seqs = list(self.seqs_per_cls[chosen_class].keys())
         selected_seqs.remove(seq_name)
 
+        support_paths = []
         for shot in range(self.shot):
             sprt_seq = np.random.choice(selected_seqs)
-            sprt_frames, sprt_masks = self._load_seq(sprt_seq, chosen_class,
-                                                     self.seqs_per_cls[chosen_class][sprt_seq])
+            sprt_frames, sprt_masks, sprt_paths = self._load_seq(sprt_seq, chosen_class,
+                                                                 self.seqs_per_cls[chosen_class][sprt_seq])
             if self.transform is not None:
                 sprt_frames, sprt_masks = self.transform(sprt_frames, sprt_masks)
             if not self.sprtset_as_frames:
                 rnd_idx = np.random.randint(0, sprt_frames.shape[0])
                 sprt_frames = sprt_frames[rnd_idx]
                 sprt_masks = sprt_masks[rnd_idx]
+                sprt_paths = sprt_paths[rnd_idx]
 
             support_frames.append(sprt_frames)
             support_masks.append(sprt_masks.long())
+            support_paths.append(sprt_paths)
+
         subcls_list = [chosen_class]
 
         if not self.sprtset_as_frames:
@@ -233,4 +242,4 @@ class NMiniVSPWEpisodicData(EpisodicData):
             support_masks = torch.stack(support_masks)
             support_masks = support_masks[:, 0]
 
-        return qry_frames, qry_masks, support_frames, support_masks, subcls_list, seq_name, []
+        return qry_frames, qry_masks, support_frames, support_masks, subcls_list, seq_name, support_paths

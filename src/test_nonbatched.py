@@ -26,6 +26,7 @@ import time
 from .visu import make_episode_visualization, make_episode_visualization_cv2, \
                   make_keyframes_vis
 from typing import Tuple
+from src.davis_metrics import db_eval_boundary
 
 def parse_args() -> None:
     parser = argparse.ArgumentParser(description='Testing')
@@ -135,6 +136,7 @@ def episodic_validate(args: argparse.Namespace,
 
         IoU = {k: defaultdict(int) for k in all_weights.keys()}
         Fscores = {k: defaultdict(int) for k in all_weights.keys()}
+        cls_n_fsc = {k: defaultdict(int)  for k in all_weights.keys()}
 
         # =============== episode = group of tasks ===============
         runtime = {k: 0  for k in all_weights.keys()}
@@ -211,7 +213,7 @@ def episodic_validate(args: argparse.Namespace,
 
                 # =========== Perform TTI inference ===============
                 batch_deltas = classifier.TTI(features_s, features_q, gt_s, gt_q, classes, n_shots, seqs, callback,
-                                                weights=weights)
+                                                weights=weights, adap_kshot=args.adap_kshot)
                 t1 = time.time()
                 runtime[method] += t1 - t0
                 logits = classifier.get_logits(features_q, seqs=seqs)  # [n_tasks, shot, h, w]
@@ -264,6 +266,12 @@ def episodic_validate(args: argparse.Namespace,
                 for i, class_ in enumerate(classes):
                     cls_intersection[method][class_] += intersection[i, 0, 1]  # Do not count background
                     cls_union[method][class_] += union[i, 0, 1]
+
+                    proba = probas[i].argmax(1).squeeze(0).detach().cpu().numpy()
+                    gt = gt_q[i].squeeze(0).cpu().numpy()
+                    Fscores[method][class_] += db_eval_boundary(proba, gt)
+                    cls_n_fsc[method][class_] += 1
+
                     if seqs[i] not in visited_seqs:
                         visited_seqs.append(seqs[i])
                         for kwin in video_consistency.keys():
@@ -274,8 +282,8 @@ def episodic_validate(args: argparse.Namespace,
 
                 for class_ in cls_union[method]:
                     IoU[method][class_] = cls_intersection[method][class_] / (cls_union[method][class_] + 1e-10)
-                    Fscores[method][class_] = 2 * cls_intersection[method][class_] / \
-                                                (cls_union[method][class_] + cls_intersection[method][class_] + 1e-10)
+                    #Fscores[method][class_] = 2 * cls_intersection[method][class_] / \
+                    #                            (cls_union[method][class_] + cls_intersection[method][class_] + 1e-10)
 
                 if (iter_num % 200 == 0):
                     mIoU = np.mean([IoU[method][i] for i in IoU[method]])
@@ -296,20 +304,24 @@ def episodic_validate(args: argparse.Namespace,
                         flow_q = None
 
                         make_episode_visualization_cv2(img_s=all_sprt['imgs'][0].copy(),
-                                                       img_q=all_qry['imgs'][i].copy(),
-                                                       gt_s=all_sprt['masks'][0].copy(),
-                                                       gt_q=all_qry['masks'][i].copy(),
-                                                       path_s=all_sprt['paths'],
-                                                       path_q=all_qry['paths'][i],
-                                                       preds=probas[i].cpu().numpy().copy(),
-                                                       save_path=save_path,
-                                                       flow_q=flow_q)
+                                                   img_q=all_qry['imgs'][i].copy(),
+                                                   gt_s=all_sprt['masks'][0].copy(),
+                                                   gt_q=all_qry['masks'][i].copy(),
+                                                   path_s=all_sprt['paths'],
+                                                   path_q=all_qry['paths'][i],
+                                                   preds=probas[i].cpu().numpy().copy(),
+                                                   save_path=save_path,
+                                                   flow_q=flow_q)
 
         # ================== Evaluation Metrics on ALl episodes ==================
         for method in all_weights.keys():
             print('========= Method {}==========='.format(method))
             runtimes[method][run] = runtime[method] / float(len(val_loader))
             mIoU = np.mean(list(IoU[method].values()))
+
+            for class_ in Fscores[method]:
+                Fscores[method][class_] /= cls_n_fsc[method][class_]
+
             fscore = np.mean(list(Fscores[method].values()))
 
             for kwin in cls_vc[method].keys():
