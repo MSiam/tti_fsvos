@@ -79,6 +79,7 @@ CLASSIFIER:
   nviews: 2
   tloss_type: pos_steer_avg
   cls_visdom_freq: 5
+  adap_kshot: False
 
 DISTRIBUTED:
   gpus: [0]
