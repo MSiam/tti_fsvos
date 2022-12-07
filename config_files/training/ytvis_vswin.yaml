@@ -14,7 +14,7 @@ DATA:
   num_classes_val: 10
   use_split_coco: False
   workers: 4
-  image_size: [241, 425]
+  image_size: [241, 425] #[369, 641]
   padding_label: 255
   mean: [0.485, 0.456, 0.406]
   std: [0.229, 0.224, 0.225]
@@ -27,8 +27,8 @@ DATA:
 TRAIN:
   ckpt_path: /local/riemann1/home/msiam/checkpoints_nometalearning_videoswin/
   resume_training: False
-  batch_size: 6
-  epochs: 10
+  batch_size: 4
+  epochs: 50
   log_freq : 50
   visdom_port: -1
   visdom_env: ""
@@ -42,7 +42,7 @@ TRAIN:
   gamma: 0.1
   nesterov: True
   weight_decay: 0.0001
-  main_optim: SGD
+  main_optim: AdamW
   scheduler: cosine
   milestones: [40, 70]
 

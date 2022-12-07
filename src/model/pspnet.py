@@ -182,7 +182,8 @@ class PSPNet(nn.Module):
         if self.arch == 'videoswin':
             x = self.videoswin_backbone(x.permute(0,2,1,3,4))[-1]
             x = x.permute(0,2,1,3,4)
-            x = x.view(-1, *x.shape[-3:])
+            x = x.view(-1, *x.shape[-3:]).contiguous()
+#            x = F.interpolate(x, (x.shape[-2]*2, x.shape[-1]*2))
         else:
             x = self.layer0(x)
             x = self.layer1(x)
@@ -195,6 +196,8 @@ class PSPNet(nn.Module):
             else:
                 x = self.layer4(x_3)
 
+       # import pdb; pdb.set_trace()
+        x = F.interpolate(x, (8, 14))
         if self.use_ppm:
             x = self.ppm(x)
         x = self.bottleneck(x)

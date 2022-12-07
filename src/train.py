@@ -85,6 +85,9 @@ def main_worker(rank: int,
     find_unused = False
     if hasattr(args, 'model_type') and args.model_type=='hsnet':
         find_unused = True
+    elif args.arch == "videoswin":
+        find_unused = True
+
     model = DDP(model, device_ids=[rank], find_unused_parameters=find_unused)
 
     # ========== Validation ==================
@@ -461,6 +464,10 @@ def do_epoch(args: argparse.Namespace,
                 loss_dict_meter[k].update(v.item() / dist.get_world_size())
 
             if main_process(args):
+                if args.arch == "videoswin":
+                    # Reshape Images with temporal and batch to be same dim for visualisation
+                    images = images.view((-1, *images.shape[-3:]))
+
                 if callback is not None:
                     t = current_iter / len(train_loader)
                     callback.scalar('loss_train_batch', t, loss_meter.avg, title='Loss')
