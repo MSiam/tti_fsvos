@@ -93,6 +93,7 @@ CLASSIFIER:
   temporal_step: 1
   cls_visdom_freq: 5
   refine_keyframes_ftune: False
+  adap_kshot: False
 
 DISTRIBUTED:
   gpus: [0]

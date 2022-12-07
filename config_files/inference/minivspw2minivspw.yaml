@@ -98,6 +98,7 @@ CLASSIFIER:
   refine_keyframes_ftune: True
   refine_iter: 10
   refine_oracle: False
+  adap_kshot: False
 
 DISTRIBUTED:
   gpus: [0]
