@@ -114,23 +114,14 @@ class PSPNet(nn.Module):
         if use_ppm:
             self.ppm = PPM(fea_dim, int(fea_dim/len(args.bins)), args.bins)
             fea_dim *= 2
-            self.bottleneck = nn.Sequential(
-                nn.Conv2d(fea_dim, self.bottleneck_dim, kernel_size=3, padding=1, bias=False),
-                nn.BatchNorm2d(self.bottleneck_dim),
-                nn.ReLU(inplace=True),
-                nn.Dropout2d(p=args.dropout))
 
-        if not self.pretrain_cl:
-            self.classifier = nn.Conv2d(self.bottleneck_dim, args.num_classes_tr, kernel_size=1)
+        self.bottleneck = nn.Sequential(
+            nn.Conv2d(fea_dim, self.bottleneck_dim, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(self.bottleneck_dim),
+            nn.ReLU(inplace=True),
+            nn.Dropout2d(p=args.dropout))
 
-        if hasattr(args, 'cl_dim'):
-            self.avg_pool = nn.AdaptiveAvgPool2d((7, 7))
-            self.cl_proj_head = nn.Sequential(
-                    nn.Conv2d(args.cl_in_channels, args.cl_dim, kernel_size=1, padding=1, bias=False),
-                    nn.BatchNorm2d(args.cl_dim),
-                    nn.ReLU(inplace=True),
-                    nn.Conv2d(args.cl_dim, args.cl_dim, kernel_size=1, padding=1, bias=False),
-                    )
+        self.classifier = nn.Conv2d(self.bottleneck_dim, args.num_classes_tr, kernel_size=1)
 
     def get_backbone_modules(self):
         if self.arch == "videoswin":
@@ -164,19 +155,12 @@ class PSPNet(nn.Module):
         else:
             extras = None
 
-        if not self.pretrain_cl:
-            x = self.classify(x, (H, W))
+        x = self.classify(x, (H, W))
 
         if extras is None:
             return x
         else:
             return x, extras
-
-    def cl_proj(self, x, avg_pool=False):
-        if avg_pool:
-            x = self.avg_pool(x)
-        x = self.cl_proj_head(x)
-        return x
 
     def extract_features(self, x, avg_pool=False, projection=False, interm=False):
         if self.arch == 'videoswin':
@@ -197,18 +181,12 @@ class PSPNet(nn.Module):
                 x = self.layer4(x_3)
 
        # import pdb; pdb.set_trace()
-        x = F.interpolate(x, (8, 14))
         if self.use_ppm:
             x = self.ppm(x)
         x = self.bottleneck(x)
 
         if interm:
-            if projection:
-                return x, self.cl_proj(interm_feats, avg_pool=avg_pool)
-            else:
-                return x, interm_feats
-        elif projection:
-            return x, self.cl_proj(x, avg_pool=avg_pool)
+            return x, interm_feats
         else:
             return x
 

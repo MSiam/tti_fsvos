@@ -70,9 +70,6 @@ def main_worker(rank: int,
     modules_ori = model.get_backbone_modules()
     modules_new = model.get_new_modules()
 
-    if hasattr(model, 'cl_proj_head'):
-        modules_new += [model.cl_proj_head]
-
     params_list = []
     for module in modules_ori:
         params_list.append(dict(params=module.parameters(), lr=args.lr))
