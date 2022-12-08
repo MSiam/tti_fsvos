@@ -235,7 +235,8 @@ class Classifier(object):
                probas: torch.tensor,
                valid_pixels: torch.tensor,
                one_hot_gt: torch.tensor,
-               reduction: str = 'sum') -> torch.tensor:
+               reduction: str = 'sum',
+               adap_wghts: List[float] = None) -> torch.tensor:
         """
         inputs:
             probas : shape [n_tasks, shot, c, h, w]
@@ -246,6 +247,9 @@ class Classifier(object):
              ce : Cross-Entropy between one_hot_gt and probas, shape [n_tasks,]
         """
         ce = - ((valid_pixels.unsqueeze(2) * (one_hot_gt * torch.log(probas + 1e-10))).sum(2))
+
+        if adap_wghts is not None:
+            ce = ce * adap_wghts.view(*adap_wghts.shape, 1, 1)
 
         ce = ce.sum(dim=(1, 2, 3))  # [n_tasks]
         ce /= valid_pixels.sum(dim=(1, 2, 3))
@@ -421,7 +425,8 @@ class Classifier(object):
               n_shots: torch.tensor,
               seqs: List[str],
               callback: VisdomLogger,
-              weights: List[int] = None) -> torch.tensor:
+              weights: List[int] = None,
+              adap_kshot: bool = False) -> torch.tensor:
         """
         Performs TTI + RePRI inference
 
@@ -485,7 +490,20 @@ class Classifier(object):
             else:
                 tloss = 0
 
-            ce = self.get_ce(proba_s, valid_pixels_s, one_hot_gt_s, reduction='none')
+            if adap_kshot:
+                if self.enable_temporal:
+                    sprt_gap_feats = (ds_gt_s.unsqueeze(2) * features_s).mean(dim=[3,4])
+                    pseudo_ds_gt_q = proba_q.detach().argmax(dim=2)
+                    qry_gap_feats = (pseudo_ds_gt_q.unsqueeze(2) * features_q).mean(dim=[3,4])
+                else:
+                    sprt_gap_feats = features_s.mean(dim=[3,4])
+                    qry_gap_feats = features_q.mean(dim=[3,4])
+
+                adap_wghts = F.cosine_similarity(sprt_gap_feats, qry_gap_feats, dim=2)
+            else:
+                adap_wghts = None
+
+            ce = self.get_ce(proba_s, valid_pixels_s, one_hot_gt_s, reduction='none', adap_wghts=adap_wghts)
             loss = l1 * ce + l2 * d_kl + l3 * cond_entropy + l4 * tloss
 
             optimizer.zero_grad()

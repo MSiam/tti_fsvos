@@ -70,9 +70,6 @@ def main_worker(rank: int,
     modules_ori = model.get_backbone_modules()
     modules_new = model.get_new_modules()
 
-    if hasattr(model, 'cl_proj_head'):
-        modules_new += [model.cl_proj_head]
-
     params_list = []
     for module in modules_ori:
         params_list.append(dict(params=module.parameters(), lr=args.lr))
@@ -85,6 +82,9 @@ def main_worker(rank: int,
     find_unused = False
     if hasattr(args, 'model_type') and args.model_type=='hsnet':
         find_unused = True
+    elif args.arch == "videoswin":
+        find_unused = True
+
     model = DDP(model, device_ids=[rank], find_unused_parameters=find_unused)
 
     # ========== Validation ==================
@@ -406,7 +406,8 @@ def do_epoch(args: argparse.Namespace,
 
         if images.ndim > 4:
             # Flatten frames dim with batch
-            images = images.view((-1, *images.shape[-3:]))
+            if args.arch != "videoswin":
+                images = images.view((-1, *images.shape[-3:]))
             gt = gt.view((-1, *gt.shape[-2:])).long()
 
         # ============ Compute Loss =================
@@ -460,6 +461,10 @@ def do_epoch(args: argparse.Namespace,
                 loss_dict_meter[k].update(v.item() / dist.get_world_size())
 
             if main_process(args):
+                if args.arch == "videoswin":
+                    # Reshape Images with temporal and batch to be same dim for visualisation
+                    images = images.view((-1, *images.shape[-3:]))
+
                 if callback is not None:
                     t = current_iter / len(train_loader)
                     callback.scalar('loss_train_batch', t, loss_meter.avg, title='Loss')
