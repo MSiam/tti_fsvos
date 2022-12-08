@@ -170,7 +170,18 @@ def episodic_validate(args: argparse.Namespace,
                     qry_img = qry_img.squeeze(0) # Squeeze batch dim
                     q_label = q_label.squeeze(0) # Squeeze batch dim
 
-                f_q = model.module.extract_features(qry_img)
+                #f_q = model.module.extract_features(qry_img)
+                clip_len = args.inference_clip_len
+                nclips = int(np.ceil(qry_img.shape[0]/clip_len))
+                f_q = []
+                for clip_idx in range(nclips):
+                    if clip_idx == nclips - 1:
+                        f_q_clip = model.module.extract_features(qry_img[clip_idx*clip_len:(clip_idx+1)*clip_len])
+                    else:
+                        f_q_clip = model.module.extract_features(qry_img[clip_idx*clip_len:(clip_idx+1)*clip_len])
+                    f_q.append(f_q_clip.detach())
+                    torch.cuda.empty_cache()
+                f_q = torch.cat(f_q, dim=0)
 
                 Nframes = f_q[0].size(0)
                 shot = f_s[0].size(0)
