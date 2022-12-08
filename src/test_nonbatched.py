@@ -112,6 +112,9 @@ def episodic_validate(args: argparse.Namespace,
     if not hasattr(args, 'vc_wins'):
         args.vc_wins = [15]
 
+    if not hasattr(args, 'multires_classifier'):
+        args.multires_classifier = False
+
     all_weights = {'tti': [1.0,'auto','auto','auto'], 'repri': [1.0,'auto','auto',0.0]}
     if hasattr(args,'selected_weights') and len(args.selected_weights) != 0:
         all_weights = {'quickval': args.selected_weights}

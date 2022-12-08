@@ -67,7 +67,7 @@ class PSPNet(nn.Module):
         self.use_ppm = use_ppm
         self.m_scale = args.m_scale
         self.bottleneck_dim = args.bottleneck_dim
-        self.multires_classifier = args.multires_classifier
+        self.multires_classifier = False if not hasattr(args, 'multires_classifier') else args.multires_classifier
         self.classifier_chs = [self.bottleneck_dim, 256]
 
         self.arch = args.arch
