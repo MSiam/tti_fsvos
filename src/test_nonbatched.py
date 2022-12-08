@@ -172,14 +172,17 @@ def episodic_validate(args: argparse.Namespace,
 
                 f_q = model.module.extract_features(qry_img)
 
-                Nframes = f_q.size(0)
-                shot = f_s.size(0)
-
+                Nframes = f_q[0].size(0)
+                shot = f_s[0].size(0)
                 iter_num += Nframes
 
                 n_shots = torch.tensor([shot] * Nframes).to(dist.get_rank(), non_blocking=True)
-                features_s = f_s.repeat(Nframes, 1, 1, 1, 1).detach()
-                features_q = f_q.detach().unsqueeze(1)
+                n_layers = len(f_q)
+                features_s = []
+                features_q = []
+                for layerno in range(n_layers):
+                    features_s.append(f_s[layerno].repeat(Nframes, 1, 1, 1, 1).detach())
+                    features_q.append(f_q[layerno].detach().unsqueeze(1))
 
                 gt_s = s_label.repeat(Nframes, 1, 1, 1)
                 gt_q = q_label.unsqueeze(1)
@@ -199,48 +202,64 @@ def episodic_validate(args: argparse.Namespace,
 
             # =========== Normalize features along channel dimension ===============
             if args.norm_feat:
-                features_s = F.normalize(features_s, dim=2)
-                features_q = F.normalize(features_q, dim=2)
+                for layerno in range(n_layers):
+                    features_s[layerno] = F.normalize(features_s[layerno], dim=2)
+                    features_q[layerno] = F.normalize(features_q[layerno], dim=2)
 
             for method, weights in all_weights.items():
                 # =========== Create a callback is args.visdom_port != -1 ===============
                 callback = VisdomLogger(port=args.visdom_port, env=args.visdom_env) if use_callback else None
 
                 # ===========  Initialize the classifier + prototypes + F/B parameter Π ===============
-                classifier = Classifier(args)
-                classifier.init_prototypes(features_s, features_q, gt_s, gt_q, classes, callback, seqs=seqs)
-                batch_deltas = classifier.compute_FB_param(features_q=features_q, gt_q=gt_q, seqs=seqs)
+                if args.multires_classifier:
+                    classifier = [Classifier(args, model.module.classifier_chs[i]) for i in range(2)]
+                else:
+                    classifier = Classifier(args)
 
-                # =========== Perform TTI inference ===============
-                batch_deltas = classifier.TTI(features_s, features_q, gt_s, gt_q, classes, n_shots, seqs, callback,
-                                                weights=weights, adap_kshot=args.adap_kshot)
-                t1 = time.time()
-                runtime[method] += t1 - t0
-                logits = classifier.get_logits(features_q, seqs=seqs)  # [n_tasks, shot, h, w]
-                logits = F.interpolate(logits,
-                                       size=(H, W),
-                                       mode='bilinear',
-                                       align_corners=True)
-                probas = classifier.get_probas(logits).detach()
-                if args.visu_keyframes:
-                    root = os.path.join('plots', 'episodes', method, 'split_%d'%args.train_split)
-                    os.makedirs(root, exist_ok=True)
-                    save_path = os.path.join(root, f'run_{run}_iter_{iter_num}.png')
-                    make_keyframes_vis(probas=probas, img_q=all_qry['imgs'].copy(),
-                                       f_q=features_q, f_s=features_s, gt_s=gt_s, gt_q=gt_q,
-                                       paths=all_qry['paths'], save_path=save_path)
+                probas_multires = []
+                for layerno in range(len(classifier)):
+                    classifier[layerno].init_prototypes(features_s[layerno], features_q[layerno], gt_s, gt_q, classes, callback, seqs=seqs)
+                    batch_deltas = classifier[layerno].compute_FB_param(features_q=features_q[layerno], gt_q=gt_q, seqs=seqs)
 
-                if args.refine_keyframes_ftune and method == "tti":
-                    # gt_q is only used to identify valid pixels and remove ones from padding for aug.
-                    classifier.ftune_selected_keyframe(all_probas=probas, all_f_q=features_q, all_f_s=features_s,
-                                                       all_gt_s=gt_s, all_gt_q=gt_q, seqs=seqs,
-                                                       refine_oracle=args.refine_oracle)
-                    logits = classifier.get_logits(features_q, seqs=seqs)  # [n_tasks, shot, h, w]
+                    # =========== Perform TTI inference ===============
+                    batch_deltas = classifier[layerno].TTI(features_s[layerno], features_q[layerno], gt_s, gt_q,
+                                                           classes, n_shots, seqs, callback,
+                                                           weights=weights, adap_kshot=args.adap_kshot)
+                    t1 = time.time()
+                    runtime[method] += t1 - t0
+                    logits = classifier[layerno].get_logits(features_q[layerno], seqs=seqs)  # [n_tasks, shot, h, w]
                     logits = F.interpolate(logits,
                                            size=(H, W),
                                            mode='bilinear',
                                            align_corners=True)
-                    probas = classifier.get_probas(logits).detach()
+
+                    probas = classifier[layerno].get_probas(logits).detach()
+                    if args.visu_keyframes:
+                        root = os.path.join('plots', 'episodes', method, 'split_%d'%args.train_split)
+                        os.makedirs(root, exist_ok=True)
+                        save_path = os.path.join(root, f'run_{run}_iter_{iter_num}.png')
+                        make_keyframes_vis(probas=probas, img_q=all_qry['imgs'].copy(),
+                                           f_q=features_q[layerno], f_s=features_s[layerno], gt_s=gt_s, gt_q=gt_q,
+                                           paths=all_qry['paths'], save_path=save_path)
+
+                    if args.refine_keyframes_ftune and method == "tti":
+                        # gt_q is only used to identify valid pixels and remove ones from padding for aug.
+                        classifier[layerno].ftune_selected_keyframe(all_probas=probas, all_f_q=features_q[layerno],
+                                                                    all_f_s=features_s[layerno], all_gt_s=gt_s,
+                                                                    all_gt_q=gt_q, seqs=seqs, refine_oracle=args.refine_oracle)
+
+                        logits = classifier[layerno].get_logits(features_q[layerno], seqs=seqs)  # [n_tasks, shot, h, w]
+                        logits = F.interpolate(logits,
+                                               size=(H, W),
+                                               mode='bilinear',
+                                               align_corners=True)
+                        probas = classifier[layerno].get_probas(logits).detach()
+
+                    probas_multires.append(probas)
+
+                hr_res = probas_multires[-1].shape[-2:]
+                probas = [F.interpolate(proba, hr_res) for proba in probas_multires]
+                probas = torch.stack(probas).mean(dim=0)
 
                 #np.save(f'{method}_probas.npy', probas.detach().cpu())
                 intersection, union, _ = batch_intersectionAndUnionGPU(probas, gt_q, 2)  # [n_tasks, shot, num_class]

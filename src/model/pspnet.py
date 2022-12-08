@@ -67,10 +67,8 @@ class PSPNet(nn.Module):
         self.use_ppm = use_ppm
         self.m_scale = args.m_scale
         self.bottleneck_dim = args.bottleneck_dim
-        if hasattr(args, 'pretrain_cl'):
-            self.pretrain_cl = args.pretrain_cl
-        else:
-            self.pretrain_cl = False
+        self.multires_classifier = args.multires_classifier
+        self.classifier_chs = [self.bottleneck_dim, 256]
 
         self.arch = args.arch
         if args.arch == 'resnet':
@@ -78,7 +76,8 @@ class PSPNet(nn.Module):
                 resnet = resnet50(pretrained=args.pretrained)
             else:
                 resnet = resnet101(pretrained=args.pretrained)
-            self.layer0 = nn.Sequential(resnet.conv1, resnet.bn1, resnet.relu, resnet.conv2, resnet.bn2, resnet.relu, resnet.conv3, resnet.bn3, resnet.relu, resnet.maxpool)
+            self.layer0 = nn.Sequential(resnet.conv1, resnet.bn1, resnet.relu, resnet.conv2, resnet.bn2, resnet.relu, resnet.conv3,
+                                        resnet.bn3, resnet.relu, resnet.maxpool)
             self.layer1, self.layer2, self.layer3, self.layer4 = resnet.layer1, resnet.layer2, resnet.layer3, resnet.layer4
             self.feature_res = (53, 53)
         elif args.arch == 'vgg':
@@ -121,7 +120,10 @@ class PSPNet(nn.Module):
             nn.ReLU(inplace=True),
             nn.Dropout2d(p=args.dropout))
 
-        self.classifier = nn.Conv2d(self.bottleneck_dim, args.num_classes_tr, kernel_size=1)
+        if self.multires_classifier:
+            self.classifier = nn.ModuleList([nn.Conv2d(self.classifier_chs[i], args.num_classes_tr, kernel_size=1) for i in range(2)])
+        else:
+            self.classifier = nn.ModuleList([nn.Conv2d(self.bottleneck_dim, args.num_classes_tr, kernel_size=1)])
 
     def get_backbone_modules(self):
         if self.arch == "videoswin":
@@ -143,55 +145,51 @@ class PSPNet(nn.Module):
             if not isinstance(m, nn.BatchNorm2d):
                 m.eval()
 
-    def forward(self, x, avg_pool=False, projection=False, interm=False):
+    def forward(self, x):
         x_size = x.size()
         assert (x_size[-2]-1) % 8 == 0 and (x_size[-1]-1) % 8 == 0
         H = int((x_size[-2] - 1) / 8 * self.zoom_factor + 1)
         W = int((x_size[-1] - 1) / 8 * self.zoom_factor + 1)
 
-        x = self.extract_features(x, avg_pool=avg_pool, projection=projection, interm=interm)
-        if len(x) == 2:
-            x, extras = x
-        else:
-            extras = None
-
+        x = self.extract_features(x)
         x = self.classify(x, (H, W))
+        return x
 
-        if extras is None:
-            return x
-        else:
-            return x, extras
-
-    def extract_features(self, x, avg_pool=False, projection=False, interm=False):
+    def extract_features(self, x):
         if self.arch == 'videoswin':
             x = self.videoswin_backbone(x.permute(0,2,1,3,4))[-1]
             x = x.permute(0,2,1,3,4)
             x = x.view(-1, *x.shape[-3:]).contiguous()
-#            x = F.interpolate(x, (x.shape[-2]*2, x.shape[-1]*2))
         else:
             x = self.layer0(x)
-            x = self.layer1(x)
-            x_2 = self.layer2(x)
+            x_1 = self.layer1(x)
+            x_2 = self.layer2(x_1)
             x_3 = self.layer3(x_2)
-            if interm:
-                interm_feats = x_3
             if self.m_scale:
                 x = torch.cat([x_2, x_3], dim=1)
             else:
                 x = self.layer4(x_3)
 
-       # import pdb; pdb.set_trace()
         if self.use_ppm:
             x = self.ppm(x)
+
         x = self.bottleneck(x)
 
-        if interm:
-            return x, interm_feats
+        if self.multires_classifier:
+            return [x, x_1]
         else:
-            return x
+            return [x]
 
     def classify(self, features, shape):
-        x = self.classifier(features)
+        probas = []
+        for i in range(len(self.classifier)):
+            x = self.classifier[i](features[i])
+            probas.append(x)
+
+        hr_res = probas[-1].shape[-2:]
+        probas = [F.interpolate(proba, hr_res) for proba in probas]
+        x = torch.stack(probas, dim=0).mean(dim=0)
+
         if self.zoom_factor != 1:
             x = F.interpolate(x, size=shape, mode='bilinear', align_corners=True)
         return x

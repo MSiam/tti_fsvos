@@ -25,7 +25,7 @@ DATA:
   augmentations: []
 
 TRAIN:
-  ckpt_path: /local/riemann1/home/msiam/checkpoints_nometalearning_r50/
+  ckpt_path: /local/riemann1/home/msiam/checkpoints_nometalearning_r50_multires/
   resume_training: False
   batch_size: 6
   epochs: 50
@@ -54,6 +54,7 @@ MODEL:
   m_scale: False
   layers: 50
   bottleneck_dim: 512
+  multires_classifier: True
 
 EVALUATION:
   episodic_val: False
