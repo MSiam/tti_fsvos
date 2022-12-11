@@ -8,7 +8,7 @@ MULTISPRT=$7 # Flag specific to ytvis to enable multiple support per class
 ADAPKSHOT=$8 # Flag to specify adaptive kshot
 
 NRUNS=1
-SPLITS="0 1 2 3"
+SPLITS="0" #1 2 3"
 VCWINS="[3,5,7,9,11]"
 
 test_num=10000 # Used only by Pascal-to-MiniVSPW
