@@ -67,7 +67,17 @@ def main_worker(rank: int,
         assert os.path.isfile(filepath), filepath
         print("=> loading weight '{}'".format(filepath))
         checkpoint = torch.load(filepath)
-        model.load_state_dict(checkpoint['state_dict'], strict=False)
+        state_dict = {}
+        for key, value in checkpoint['state_dict'].items():
+            if 'module.classifier.' in key:
+                if not key.split('.')[2].isdigit():
+                    state_dict[key.replace('module.classifier.', 'module.classifier.0.')] = checkpoint['state_dict'][key]
+                else:
+                    state_dict[key] = checkpoint['state_dict'][key]
+            else:
+                state_dict[key] = checkpoint['state_dict'][key]
+
+        model.load_state_dict(state_dict, strict=False)
         print("=> loaded weight '{}'".format(filepath))
     else:
         print("=> Not loading anything")
