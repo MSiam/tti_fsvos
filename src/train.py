@@ -27,6 +27,7 @@ import argparse
 from typing import Tuple
 from .util import load_cfg_from_cfg_file, merge_cfg_from_list
 from src.losses.contrastive_loss import dense_temporal_contrastive_loss
+from src.losses.region_losses import DiceFocalMultiLabelCriterion
 from src.util import init_or_resume_wandb_run
 import wandb
 import pathlib
@@ -293,19 +294,13 @@ def compute_loss(args: argparse.Namespace,
     if hasattr(args, 'training_loss'):
         loss_type = args.training_loss
 
-    if loss_type == 'iou':
+    if loss_type == 'region':
         # IoU Loss
         logits = model(images)
-        preds = F.softmax(logits, dim=1)
-        loss_dict['IOU'] = iou_loss(preds, one_hot, targets)
-        loss += loss_dict['IOU']
-
-    elif loss_type == 'ce_iou':
-        logits = model(images)
-        loss_dict['CE']  = cross_entropy(logits, one_hot, targets)
-        preds = F.softmax(logits, dim=1)
-        loss_dict['IOU'] = iou_loss(preds[:, 1:], one_hot[:, 1:], targets)
-        loss = loss_dict['CE'] + loss_dict['IOU']
+        criterion = DiceFocalMultiLabelCriterion(args.num_classes_tr)
+        loss_dict = criterion(logits, targets)
+        for k, v in loss_dict.items():
+            loss += v
 
     else:
         # Cross entropy loss, can have auxiliary contrastive

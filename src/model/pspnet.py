@@ -121,9 +121,11 @@ class PSPNet(nn.Module):
             nn.Dropout2d(p=args.dropout))
 
         if self.multires_classifier:
-            self.classifier = nn.ModuleList([nn.Conv2d(self.classifier_chs[i], args.num_classes_tr, kernel_size=1) for i in range(2)])
-        else:
-            self.classifier = nn.ModuleList([nn.Conv2d(self.bottleneck_dim, args.num_classes_tr, kernel_size=1)])
+            self.multires_mixer = nn.Sequential(
+                nn.Conv2d(self.classifier_chs[0] + self.classifier_chs[1], self.bottleneck_dim, kernel_size=1),
+                nn.BatchNorm2d(self.bottleneck_dim),
+                nn.ReLU(inplace=True))
+        self.classifier = nn.ModuleList([nn.Conv2d(self.bottleneck_dim, args.num_classes_tr, kernel_size=1)])
 
     def get_backbone_modules(self):
         if self.arch == "videoswin":
@@ -176,20 +178,22 @@ class PSPNet(nn.Module):
         x = self.bottleneck(x)
 
         if self.multires_classifier:
-            return [x, x_1]
+            x = F.interpolate(x, x_1.shape[-2:], mode='bilinear', align_corners=True)
+            x = self.multires_mixer(torch.cat([x, x_1], dim=1))
+            return [x]
         else:
             return [x]
 
     def classify(self, features, shape):
-        probas = []
-        for i in range(len(self.classifier)):
-            x = self.classifier[i](features[i])
-            probas.append(x)
+#        probas = []
+#        for i in range(len(self.classifier)):
+#            x = self.classifier[i](features[i])
+#            probas.append(x)
+#        hr_res = probas[-1].shape[-2:]
+#        probas = [F.interpolate(proba, hr_res) for proba in probas]
+#        x = torch.stack(probas, dim=0).mean(dim=0)
 
-        hr_res = probas[-1].shape[-2:]
-        probas = [F.interpolate(proba, hr_res) for proba in probas]
-        x = torch.stack(probas, dim=0).mean(dim=0)
-
+        x = self.classifier[-1](features[-1])
         if self.zoom_factor != 1:
             x = F.interpolate(x, size=shape, mode='bilinear', align_corners=True)
         return x

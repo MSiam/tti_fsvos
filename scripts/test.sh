@@ -7,7 +7,7 @@ REFINE=$6 # Flag to perform keyframe finetuning
 MULTISPRT=$7 # Flag specific to ytvis to enable multiple support per class
 ADAPKSHOT=$8 # Flag to specify adaptive kshot
 
-NRUNS=1
+NRUNS=5
 SPLITS="0" #1 2 3"
 VCWINS="[3,5,7,9,11]"
 
