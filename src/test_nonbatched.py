@@ -163,7 +163,7 @@ def episodic_validate(args: argparse.Namespace,
                 s_label = s_label.to(dist.get_rank(), non_blocking=True)
                 qry_img = qry_img.to(dist.get_rank(), non_blocking=True)
 
-                f_s = model.module.extract_features(spprt_imgs.squeeze(0))
+                f_s = model.module.extract_features(spprt_imgs.squeeze(0), using_sprt=True)
 
                 if qry_img.ndim > 4:
                     # B x N x C x H x W --> N x C X H X W

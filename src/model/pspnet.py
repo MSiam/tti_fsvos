@@ -143,13 +143,13 @@ class PSPNet(nn.Module):
             if not isinstance(m, nn.BatchNorm2d):
                 m.eval()
 
-    def forward(self, x, avg_pool=False, projection=False, interm=False):
+    def forward(self, x, using_sprt=False):
         x_size = x.size()
         assert (x_size[-2]-1) % 8 == 0 and (x_size[-1]-1) % 8 == 0
         H = int((x_size[-2] - 1) / 8 * self.zoom_factor + 1)
         W = int((x_size[-1] - 1) / 8 * self.zoom_factor + 1)
 
-        x = self.extract_features(x, avg_pool=avg_pool, projection=projection, interm=interm)
+        x = self.extract_features(x, using_sprt=using_sprt)
         if len(x) == 2:
             x, extras = x
         else:
@@ -162,8 +162,16 @@ class PSPNet(nn.Module):
         else:
             return x, extras
 
-    def extract_features(self, x, avg_pool=False, projection=False, interm=False):
+    def extract_features(self, x, using_sprt=False):
         if self.arch == 'videoswin':
+            if len(x.shape) < 5:
+                if using_sprt:
+                    # Support set are single images has Shot x 3 x H x W
+                    x = x.unsqueeze(1)
+                else:
+                    # Query set has T x 3 x H x W
+                    x = x.unsqueeze(0)
+
             x = self.videoswin_backbone(x.permute(0,2,1,3,4))[-1]
             x = x.permute(0,2,1,3,4)
             x = x.view(-1, *x.shape[-3:]).contiguous()
@@ -173,8 +181,6 @@ class PSPNet(nn.Module):
             x = self.layer1(x)
             x_2 = self.layer2(x)
             x_3 = self.layer3(x_2)
-            if interm:
-                interm_feats = x_3
             if self.m_scale:
                 x = torch.cat([x_2, x_3], dim=1)
             else:
@@ -185,10 +191,7 @@ class PSPNet(nn.Module):
             x = self.ppm(x)
         x = self.bottleneck(x)
 
-        if interm:
-            return x, interm_feats
-        else:
-            return x
+        return x
 
     def classify(self, features, shape):
         x = self.classifier(features)

@@ -337,22 +337,6 @@ def compute_loss(args: argparse.Namespace,
 
         loss += loss_dict['CE']
 
-        if aux_images is not None:
-            assert len(torch.unique(aux_gt)) <= 2, 'Wrongly Labelled Auxiliary'
-            if len(torch.unique(aux_gt)) == 2:
-                assert 255 in torch.unique(aux_gt), 'Wrongly Labelled Auxiliary'
-
-            # Compute contrastive Loss
-            aux_images = aux_images.view(-1, *aux_images.shape[-3:])
-            _, aux_features = model(aux_images, interm=args.densecl_interm, avg_pool=args.densecl_avgpool,
-                                    projection=args.densecl_proj)
-
-            aux_features = aux_features.view(-1, args.aux_temporal_window, \
-                                             *aux_features.shape[-3:])
-            loss_dict['TCL'] = dense_temporal_contrastive_loss(aux_features, temperature=args.densecl_temperature,
-                                                               rank=dist.get_rank(), aux_gt=aux_gt)
-            loss += args.densecl_lamda * loss_dict['TCL']
-
     return loss, loss_dict
 
 def do_epoch(args: argparse.Namespace,
