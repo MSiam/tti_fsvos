@@ -121,9 +121,12 @@ class PSPNet(nn.Module):
             nn.Dropout2d(p=args.dropout))
 
         if self.multires_classifier:
-            self.classifier = nn.ModuleList([nn.Conv2d(self.classifier_chs[i], args.num_classes_tr, kernel_size=1) for i in range(2)])
-        else:
-            self.classifier = nn.ModuleList([nn.Conv2d(self.bottleneck_dim, args.num_classes_tr, kernel_size=1)])
+            self.multires_mixer = nn.Sequential(
+                nn.Conv2d(self.classifier_chs[0] + self.classifier_chs[1], self.bottleneck_dim, kernel_size=1),
+                nn.BatchNorm2d(self.bottleneck_dim),
+                nn.ReLU(inplace=True))
+
+        self.classifier = nn.ModuleList([nn.Conv2d(self.bottleneck_dim, args.num_classes_tr, kernel_size=1)])
 
     def get_backbone_modules(self):
         if self.arch == "videoswin":
@@ -133,9 +136,14 @@ class PSPNet(nn.Module):
 
     def get_new_modules(self):
         if self.use_ppm:
-            return [self.ppm, self.bottleneck, self.classifier]
+            modules = [self.ppm, self.bottleneck, self.classifier]
         else:
-            return [self.bottleneck, self.classifier]
+            modules = [self.bottleneck, self.classifier]
+
+        if self.multires_classifier:
+            modules += [self.multires_mixer]
+
+        return modules
 
     def set_feature_res(self, size):
         self.feature_res = (int(np.ceil(size[0]/8.0)), int(np.ceil(size[1]/8.0)))
@@ -145,20 +153,31 @@ class PSPNet(nn.Module):
             if not isinstance(m, nn.BatchNorm2d):
                 m.eval()
 
-    def forward(self, x):
+    def forward(self, x, using_sprt=False):
         x_size = x.size()
         assert (x_size[-2]-1) % 8 == 0 and (x_size[-1]-1) % 8 == 0
         H = int((x_size[-2] - 1) / 8 * self.zoom_factor + 1)
         W = int((x_size[-1] - 1) / 8 * self.zoom_factor + 1)
 
-        x = self.extract_features(x)
+        x = self.extract_features(x, using_sprt=using_sprt)
         x = self.classify(x, (H, W))
         return x
 
-    def extract_features(self, x):
+    def extract_features(self, x, using_sprt=False):
         if self.arch == 'videoswin':
-            x = self.videoswin_backbone(x.permute(0,2,1,3,4))[-1]
-            x = x.permute(0,2,1,3,4)
+            if len(x.shape) < 5:
+                if using_sprt:
+                    # Support set are single images has Shot x 3 x H x W
+                    x = x.unsqueeze(1)
+                else:
+                    # Query set has T x 3 x H x W
+                    x = x.unsqueeze(0)
+
+            x = self.videoswin_backbone(x.permute(0,2,1,3,4))
+            x_1 = x[0].permute(0,2,1,3,4)
+            x_1 = x_1.view(-1, *x_1.shape[-3:]).contiguous()
+
+            x = x[-1].permute(0,2,1,3,4)
             x = x.view(-1, *x.shape[-3:]).contiguous()
         else:
             x = self.layer0(x)
@@ -176,20 +195,14 @@ class PSPNet(nn.Module):
         x = self.bottleneck(x)
 
         if self.multires_classifier:
-            return [x, x_1]
+            x = F.interpolate(x, x_1.shape[-2:], mode='bilinear', align_corners=True)
+            x = self.multires_mixer(torch.cat([x, x_1], dim=1))
+            return [x]
         else:
             return [x]
 
     def classify(self, features, shape):
-        probas = []
-        for i in range(len(self.classifier)):
-            x = self.classifier[i](features[i])
-            probas.append(x)
-
-        hr_res = probas[-1].shape[-2:]
-        probas = [F.interpolate(proba, hr_res) for proba in probas]
-        x = torch.stack(probas, dim=0).mean(dim=0)
-
+        x = self.classifier[-1](features[-1])
         if self.zoom_factor != 1:
             x = F.interpolate(x, size=shape, mode='bilinear', align_corners=True)
         return x

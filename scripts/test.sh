@@ -8,17 +8,10 @@ MULTISPRT=$7 # Flag specific to ytvis to enable multiple support per class
 ADAPKSHOT=$8 # Flag to specify adaptive kshot
 
 NRUNS=1
-SPLITS="0 1 2 3"
+SPLITS="0"
 VCWINS="[3,5,7,9,11]"
-
-test_num=10000 # Used only by Pascal-to-MiniVSPW
-run=test
-
-if [ $DATA == "inference/ytvis" ] || [ $DATA == "inference/minivspw2minivspw" ] 
-then
-    run=test_nonbatched
-    test_num=0
-fi
+run=test_nonbatched
+test_num=0
 
 ################ bsz_val only used in Pascal-to-MiniVSPW for batching and faster inference
 if [ $SHOT == 1 ]
