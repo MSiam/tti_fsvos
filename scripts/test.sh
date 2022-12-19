@@ -10,6 +10,7 @@ ADAPKSHOT=$8 # Flag to specify adaptive kshot
 NRUNS=1
 SPLITS="0"
 VCWINS="[3,5,7,9,11]"
+
 run=test_nonbatched
 test_num=0
 
@@ -48,8 +49,9 @@ do
                                vc_wins ${VCWINS} \
                                ckpt_path ${CKPT} \
                                refine_keyframes_ftune ${REFINE} \
-                               selected_weights [] \
+                               selected_weights "[1.0, 'auto', 'auto', 0.0]" \
                                multi_rnd_sprt ${MULTISPRT} \
                                adap_kshot ${ADAPKSHOT} \
 							   | tee ${dirname}/log_${PI}.txt
 done
+                               #selected_weights [] \

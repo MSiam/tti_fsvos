@@ -67,7 +67,17 @@ def main_worker(rank: int,
         assert os.path.isfile(filepath), filepath
         print("=> loading weight '{}'".format(filepath))
         checkpoint = torch.load(filepath)
-        model.load_state_dict(checkpoint['state_dict'], strict=False)
+        state_dict = {}
+        for key, value in checkpoint['state_dict'].items():
+            if 'module.classifier.' in key:
+                if not key.split('.')[2].isdigit():
+                    state_dict[key.replace('module.classifier.', 'module.classifier.0.')] = checkpoint['state_dict'][key]
+                else:
+                    state_dict[key] = checkpoint['state_dict'][key]
+            else:
+                state_dict[key] = checkpoint['state_dict'][key]
+
+        model.load_state_dict(state_dict, strict=False)
         print("=> loaded weight '{}'".format(filepath))
     else:
         print("=> Not loading anything")
@@ -181,9 +191,15 @@ def episodic_validate(args: argparse.Namespace,
                         f_q_clip = model.module.extract_features(qry_img[clip_idx*clip_len:(clip_idx+1)*clip_len])
                     else:
                         f_q_clip = model.module.extract_features(qry_img[clip_idx*clip_len:(clip_idx+1)*clip_len])
-                    f_q.append(f_q_clip.detach())
+                    if len(f_q) == 0:
+                        f_q = [[] for i in range(len(f_q_clip))]
+
+                    for i in range(len(f_q_clip)):
+                        f_q[i].append(f_q_clip[i].detach())
+
                     torch.cuda.empty_cache()
-                f_q = torch.cat(f_q, dim=0)
+
+                f_q = [torch.cat(f_q[i], dim=0) for i in range(len(f_q))]
 
                 Nframes = f_q[0].size(0)
                 shot = f_s[0].size(0)
@@ -224,29 +240,25 @@ def episodic_validate(args: argparse.Namespace,
                 callback = VisdomLogger(port=args.visdom_port, env=args.visdom_env) if use_callback else None
 
                 # ===========  Initialize the classifier + prototypes + F/B parameter Π ===============
-                if args.multires_classifier:
-                    classifier = [Classifier(args, model.module.classifier_chs[i]) for i in range(2)]
-                else:
-                    classifier = Classifier(args)
-
                 probas_multires = []
-                for layerno in range(len(classifier)):
-                    classifier[layerno].init_prototypes(features_s[layerno], features_q[layerno], gt_s, gt_q, classes, callback, seqs=seqs)
-                    batch_deltas = classifier[layerno].compute_FB_param(features_q=features_q[layerno], gt_q=gt_q, seqs=seqs)
+                for layerno in range(len(features_q)):
+                    classifier = Classifier(args)#, model.module.classifier_chs[layerno])
+                    classifier.init_prototypes(features_s[layerno], features_q[layerno], gt_s, gt_q, classes, callback, seqs=seqs)
+                    batch_deltas = classifier.compute_FB_param(features_q=features_q[layerno], gt_q=gt_q, seqs=seqs)
 
                     # =========== Perform TTI inference ===============
-                    batch_deltas = classifier[layerno].TTI(features_s[layerno], features_q[layerno], gt_s, gt_q,
+                    batch_deltas = classifier.TTI(features_s[layerno], features_q[layerno], gt_s, gt_q,
                                                            classes, n_shots, seqs, callback,
                                                            weights=weights, adap_kshot=args.adap_kshot)
                     t1 = time.time()
                     runtime[method] += t1 - t0
-                    logits = classifier[layerno].get_logits(features_q[layerno], seqs=seqs)  # [n_tasks, shot, h, w]
+                    logits = classifier.get_logits(features_q[layerno], seqs=seqs)  # [n_tasks, shot, h, w]
                     logits = F.interpolate(logits,
                                            size=(H, W),
                                            mode='bilinear',
                                            align_corners=True)
 
-                    probas = classifier[layerno].get_probas(logits).detach()
+                    probas = classifier.get_probas(logits).detach()
                     if args.visu_keyframes:
                         root = os.path.join('plots', 'episodes', method, 'split_%d'%args.train_split)
                         os.makedirs(root, exist_ok=True)
@@ -257,22 +269,20 @@ def episodic_validate(args: argparse.Namespace,
 
                     if args.refine_keyframes_ftune and method == "tti":
                         # gt_q is only used to identify valid pixels and remove ones from padding for aug.
-                        classifier[layerno].ftune_selected_keyframe(all_probas=probas, all_f_q=features_q[layerno],
-                                                                    all_f_s=features_s[layerno], all_gt_s=gt_s,
-                                                                    all_gt_q=gt_q, seqs=seqs, refine_oracle=args.refine_oracle)
+                        classifier.ftune_selected_keyframe(all_probas=probas, all_f_q=features_q[layerno],
+                                                           all_f_s=features_s[layerno], all_gt_s=gt_s,
+                                                           all_gt_q=gt_q, seqs=seqs, refine_oracle=args.refine_oracle)
 
-                        logits = classifier[layerno].get_logits(features_q[layerno], seqs=seqs)  # [n_tasks, shot, h, w]
+                        logits = classifier.get_logits(features_q[layerno], seqs=seqs)  # [n_tasks, shot, h, w]
                         logits = F.interpolate(logits,
                                                size=(H, W),
                                                mode='bilinear',
                                                align_corners=True)
-                        probas = classifier[layerno].get_probas(logits).detach()
+                        probas = classifier.get_probas(logits).detach()
 
                     probas_multires.append(probas)
 
-                hr_res = probas_multires[-1].shape[-2:]
-                probas = [F.interpolate(proba, hr_res) for proba in probas_multires]
-                probas = torch.stack(probas).mean(dim=0)
+                probas = torch.stack(probas_multires).mean(dim=0)
 
                 #np.save(f'{method}_probas.npy', probas.detach().cpu())
                 intersection, union, _ = batch_intersectionAndUnionGPU(probas, gt_q, 2)  # [n_tasks, shot, num_class]

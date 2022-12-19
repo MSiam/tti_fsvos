@@ -125,7 +125,6 @@ class PSPNet(nn.Module):
                 nn.Conv2d(self.classifier_chs[0] + self.classifier_chs[1], self.bottleneck_dim, kernel_size=1),
                 nn.BatchNorm2d(self.bottleneck_dim),
                 nn.ReLU(inplace=True))
-
         self.classifier = nn.ModuleList([nn.Conv2d(self.bottleneck_dim, args.num_classes_tr, kernel_size=1)])
 
     def get_backbone_modules(self):

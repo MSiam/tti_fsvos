@@ -10,6 +10,7 @@ DATA:
   class_mapping: None
   class_names_list: None
   val_list: None
+  sample_per_class: 10
   num_classes_tr: 31  # Counting background for training
   num_classes_val: 10
   use_split_coco: False
@@ -23,12 +24,13 @@ DATA:
   rot_min: None
   rot_max: None
   augmentations: []
+  multi_rnd_sprt: False # YTVIS V1: False, YTVIS V2: True (More stable)
 
 TRAIN:
-  ckpt_path: /local/riemann1/home/msiam/checkpoints_nometalearning_r50_multires_fixed_newmods/
+  ckpt_path: checkpoints/
   resume_training: False
-  batch_size: 6
-  epochs: 50
+  batch_size: 7
+  epochs: 100
   log_freq : 50
   visdom_port: -1
   visdom_env: ""
@@ -45,7 +47,6 @@ TRAIN:
   main_optim: SGD
   scheduler: cosine
   milestones: [40, 70]
-  training_loss: ce
 
 MODEL:
   arch: resnet
@@ -55,19 +56,34 @@ MODEL:
   m_scale: False
   layers: 50
   bottleneck_dim: 512
-  multires_classifier: True
+  multires_classifier: False
 
 EVALUATION:
   episodic_val: False
-  temporal_episodic_val: 0
-  batch_size_val: 10
+  temporal_episodic_val: 3 #0: None, 1: TAO, 2: VSPW, 3: YTVIS
+  shot: 1
+  query_frame: 5
+  random_shot: False
+  norm_feat: True
+  batch_size_val: 200
   manual_seed: 2020
   ckpt_used: best
+  FB_param_noise: 0
+  test_num: 1000
   smoothing: True
-  eval_vc: False
+  n_runs: 2
+  save_oracle: False
+  eval_vc: True
+  vc_size_th: 0
+  vc_wins: [3]
+  selected_weights: []
+  inference_clip_len: 30
 
 VISUALIZATION:
   visu: False
+  vis_dir: /local/riemann1/home/msiam/debug_bdry/ours_vis/
+  analysis_dir: 'analysis/'
+  visu_keyframes: False
 
 CLASSIFIER:
   distance: cos
@@ -79,14 +95,15 @@ CLASSIFIER:
   FB_param_update: [10]
   scl_temperature: 0.1
   nviews: 2
-  tloss_type: pos_steer_avg
+  tloss_type: [temporal_repri, pos_neg_steer_avg]
+  temporal_window: 3
+  temporal_step: 1
   cls_visdom_freq: 5
+  single_proto_flag: False
+  refine_keyframes_ftune: True
+  refine_iter: 10
+  refine_oracle: False
   adap_kshot: False
 
 DISTRIBUTED:
   gpus: [0]
-
-WANDB:
-  wandb_user: 'yvv'
-  wandb_project: 'tfss'
-  wandb_run_name: ''
