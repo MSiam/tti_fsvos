@@ -135,9 +135,9 @@ class PSPNet(nn.Module):
 
     def get_new_modules(self):
         if self.use_ppm:
-            return [self.ppm, self.bottleneck, self.classifier]
+            return [self.ppm, self.bottleneck, self.multires_mixer, self.classifier]
         else:
-            return [self.bottleneck, self.classifier]
+            return [self.bottleneck, self.multires_mixer, self.classifier]
 
     def set_feature_res(self, size):
         self.feature_res = (int(np.ceil(size[0]/8.0)), int(np.ceil(size[1]/8.0)))

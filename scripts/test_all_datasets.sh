@@ -3,7 +3,8 @@
 #bash scripts/test_all.sh inference/pascal2minivspw [1] model_ckpt/ True False
 #
 ## Youtube-VIS V1 (Single Support set per class) w/o + with Keyframe refinement + DCL
-bash scripts/test.sh inference/ytvis 5 [1] 50 /local/riemann1/home/msiam/checkpoints_nometalearning_r50_multires/ False False False
+#bash scripts/test.sh inference/ytvis 5 [1] 50 /local/riemann1/home/msiam/checkpoints_nometalearning_r50_multires_fixed/ False False False
+bash scripts/test.sh inference/ytvis_nomultires 5 [1] 50 /home/msiam/Code/tti_fsvos/model_ckpt/ False False False
 #bash scripts/test.sh inference/ytvis 5 [0] 50 model_ckpt/ True False
 #bash scripts/test.sh inference/ytvis 5 [0] 50 model_ckpt_dcl/ True False
 

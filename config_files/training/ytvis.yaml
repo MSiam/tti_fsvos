@@ -25,7 +25,7 @@ DATA:
   augmentations: []
 
 TRAIN:
-  ckpt_path: /local/riemann1/home/msiam/checkpoints_nometalearning_r50_multires_fixed/
+  ckpt_path: /local/riemann1/home/msiam/checkpoints_nometalearning_r50_multires_fixed_newmods/
   resume_training: False
   batch_size: 6
   epochs: 50

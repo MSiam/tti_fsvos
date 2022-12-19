@@ -49,8 +49,9 @@ do
                                vc_wins ${VCWINS} \
                                ckpt_path ${CKPT} \
                                refine_keyframes_ftune ${REFINE} \
-                               selected_weights [] \
+                               selected_weights "[1.0, 'auto', 'auto', 0.0]" \
                                multi_rnd_sprt ${MULTISPRT} \
                                adap_kshot ${ADAPKSHOT} \
 							   | tee ${dirname}/log_${PI}.txt
 done
+                               #selected_weights [] \
