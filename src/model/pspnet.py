@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from .resnet import resnet50, resnet101
 from .vgg import vgg16_bn
 from .video_swin import build_swin_b_backbone
+from .decoder import Decoder
 
 class PPM(nn.Module):
     def __init__(self, in_dim, reduction_dim, bins):
@@ -121,10 +122,12 @@ class PSPNet(nn.Module):
             nn.Dropout2d(p=args.dropout))
 
         if self.multires_classifier:
-            self.multires_mixer = nn.Sequential(
-                nn.Conv2d(self.classifier_chs[0] + self.classifier_chs[1], self.bottleneck_dim, kernel_size=1),
-                nn.BatchNorm2d(self.bottleneck_dim),
-                nn.ReLU(inplace=True))
+            #self.multires_mixer = nn.Sequential(
+            #    nn.Conv2d(self.classifier_chs[0] + self.classifier_chs[1], self.bottleneck_dim, kernel_size=1),
+            #    nn.BatchNorm2d(self.bottleneck_dim),
+            #    nn.ReLU(inplace=True))
+            self.multires_mixer = Decoder(self.bottleneck_dim, self.bottleneck_dim)
+
         self.classifier = nn.ModuleList([nn.Conv2d(self.bottleneck_dim, args.num_classes_tr, kernel_size=1)])
 
     def get_backbone_modules(self):
@@ -194,8 +197,9 @@ class PSPNet(nn.Module):
         x = self.bottleneck(x)
 
         if self.multires_classifier:
-            x = F.interpolate(x, x_1.shape[-2:], mode='bilinear', align_corners=True)
-            x = self.multires_mixer(torch.cat([x, x_1], dim=1))
+            x = self.multires_mixer(x, x_1)
+            #x = F.interpolate(x, x_1.shape[-2:], mode='bilinear', align_corners=True)
+            #x = self.multires_mixer(torch.cat([x, x_1], dim=1))
             return [x]
         else:
             return [x]
