@@ -228,11 +228,12 @@ def episodic_validate(args: argparse.Namespace,
                                        f_q=features_q, f_s=features_s, gt_s=gt_s, gt_q=gt_q,
                                        paths=all_qry['paths'], save_path=save_path)
 
-                if args.refine_keyframes_ftune and method == "tti":
+                if args.refine_keyframes_ftune and method in ["tti", "quickval"]:
                     # gt_q is only used to identify valid pixels and remove ones from padding for aug.
                     classifier.ftune_selected_keyframe(all_probas=probas, all_f_q=features_q, all_f_s=features_s,
                                                        all_gt_s=gt_s, all_gt_q=gt_q, seqs=seqs,
-                                                       refine_oracle=args.refine_oracle)
+                                                       refine_oracle=args.refine_oracle,
+                                                       refine_nks=args.refine_nks if hasattr(args, 'refine_nks') else 1)
                     logits = classifier.get_logits(features_q, seqs=seqs)  # [n_tasks, shot, h, w]
                     logits = F.interpolate(logits,
                                            size=(H, W),

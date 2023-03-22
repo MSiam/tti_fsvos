@@ -346,7 +346,8 @@ class Classifier(object):
         return total_loss
 
     def ftune_selected_keyframe(self, all_probas: torch.tensor, all_f_q: torch.tensor, all_f_s: torch.tensor,
-            all_gt_s: torch.tensor, all_gt_q: torch.tensor, seqs: List[str], refine_oracle: bool = False):
+            all_gt_s: torch.tensor, all_gt_q: torch.tensor, seqs: List[str], refine_oracle: bool = False,
+            refine_nks: int = 1):
         """
         Finetune Based on KeyFrames in the sequence
         """
@@ -378,7 +379,11 @@ class Classifier(object):
                 ref_protos = ref_protos[np.where(seqs == seq)]
 
             cossim = F.cosine_similarity(ref_protos, protos, dim=1)
-            keyframe_indx = torch.argmax(cossim)
+            if cossim.shape[0] < refine_nks:
+                keyframe_indx = [torch.argmax(cossim)]
+            else:
+                keyframe_indx = torch.topk(cossim, refine_nks).indices
+            #keyframe_indx = torch.argmax(cossim)
 
             Nframes = f_q.shape[0]
             ######## For debugging purposes only confirm its learning with real gt of keyframe as upper bound
@@ -389,28 +394,33 @@ class Classifier(object):
                 val_q_pixels = val_q_pixels * (pseudogt_keyframe != 255).float()
                 pseudogt_keyframe = to_one_hot(pseudogt_keyframe, 2)
             else:
-                pseudogt_keyframe = create_pseudogt(probas[keyframe_indx].unsqueeze(0))
-                val_q_pixels = val_q_pixels * (pseudogt_keyframe != 255).float()
+                pseudogt_keyframes = []
+                for idx in keyframe_indx:
+                    pseudogt_keyframe = create_pseudogt(probas[idx].unsqueeze(0))
+                    #val_q_pixels = val_q_pixels * (pseudogt_keyframe != 255).float() # it is not needed cause there are no invalid pixels
+                    pseudogt_keyframe = to_one_hot(pseudogt_keyframe, 2)
+                    pseudogt_keyframe = pseudogt_keyframe.repeat(Nframes, 1, 1, 1, 1)
+                    pseudogt_keyframes.append(pseudogt_keyframe)
 
-                pseudogt_keyframe = to_one_hot(pseudogt_keyframe, 2)
-                pseudogt_keyframe = pseudogt_keyframe.repeat(Nframes, 1, 1, 1, 1)
-            keyframe_f_q = f_q[keyframe_indx].unsqueeze(0).repeat(Nframes, 1, 1, 1, 1)
+            keyframes_f_q = f_q[keyframe_indx]
+            keyframes_f_q = keyframes_f_q.unsqueeze(1).repeat(1, Nframes, 1, 1, 1, 1) #unsqueeze(0).repeat(Nframes, 1, 1, 1, 1)
 
             optimizer = torch.optim.SGD([self.prototype, self.bias], lr=self.lr/10.0)
 
             for iteration in range(1, self.refine_iter):
-                logits_q = self.get_logits(keyframe_f_q, seqs=seqs, selected_seq=seq)  # [n_tasks, 1, num_class, h, w]
-                keyframe_proba_q = self.get_probas(logits_q, seqs=seqs, selected_seq=seq)
+                for keyframe_f_q, pseudogt_keyframe in zip(keyframes_f_q, pseudogt_keyframes):
+                    logits_q = self.get_logits(keyframe_f_q, seqs=seqs, selected_seq=seq)  # [n_tasks, 1, num_class, h, w]
+                    keyframe_proba_q = self.get_probas(logits_q, seqs=seqs, selected_seq=seq)
 
-                keyframe_proba_q = F.interpolate(keyframe_proba_q[:, 0], pseudogt_keyframe.shape[-2:])
-                keyframe_proba_q = keyframe_proba_q.unsqueeze(1)
+                    keyframe_proba_q = F.interpolate(keyframe_proba_q[:, 0], pseudogt_keyframe.shape[-2:])
+                    keyframe_proba_q = keyframe_proba_q.unsqueeze(1)
 
-                # Ignoring the Padding from Resize (using valid_pixels_q) only, Groundtruth is from preds
-                loss = self.get_ce(keyframe_proba_q, val_q_pixels, pseudogt_keyframe, reduction='none')
+                    # Ignoring the Padding from Resize (using valid_pixels_q) only, Groundtruth is from preds
+                    loss = self.get_ce(keyframe_proba_q, val_q_pixels, pseudogt_keyframe, reduction='none')
 
-                optimizer.zero_grad()
-                loss.sum(0).backward()
-                optimizer.step()
+                    optimizer.zero_grad()
+                    loss.sum(0).backward()
+                    optimizer.step()
 
     def TTI(self,
               features_s: torch.tensor,

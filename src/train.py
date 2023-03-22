@@ -542,6 +542,7 @@ if __name__ == "__main__":
     distributed = world_size > 1
     args.distributed = distributed
     args.port = find_free_port()
+    import pdb; pdb.set_trace()
     if args.debug:
         # In debugging mode don use multile processes
         main_worker(0, world_size, args)
