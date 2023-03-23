@@ -93,7 +93,7 @@ CLASSIFIER:
   FB_param_update: [10]
   scl_temperature: 0.1
   nviews: 2
-  tloss_type: [temporal_repri, pos_neg_steer_avg]
+  tloss_type: [pos_neg_steer_avg]
   temporal_window: 3
   temporal_step: 1
   cls_visdom_freq: 5
@@ -101,7 +101,7 @@ CLASSIFIER:
   refine_keyframes_ftune: True
   refine_iter: 10
   refine_oracle: False
-  refine_nks: 2
+  refine_nks: 1
 
 DISTRIBUTED:
   gpus: [0]
