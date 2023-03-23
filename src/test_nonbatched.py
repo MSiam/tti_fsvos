@@ -123,6 +123,9 @@ def episodic_validate(args: argparse.Namespace,
     val_losses = {k: np.zeros(args.n_runs) for k in all_weights.keys()}
 
     # ========== Perform the runs  ==========
+#    ftune_time = 0
+#    ftune_n = 0
+
     for run in tqdm(range(args.n_runs)):
 
         # =============== Initialize the metric dictionaries ===============
@@ -228,6 +231,7 @@ def episodic_validate(args: argparse.Namespace,
                                        f_q=features_q, f_s=features_s, gt_s=gt_s, gt_q=gt_q,
                                        paths=all_qry['paths'], save_path=save_path)
 
+                start = time.time()
                 if args.refine_keyframes_ftune and method in ["tti", "quickval"]:
                     # gt_q is only used to identify valid pixels and remove ones from padding for aug.
                     classifier.ftune_selected_keyframe(all_probas=probas, all_f_q=features_q, all_f_s=features_s,
@@ -241,6 +245,11 @@ def episodic_validate(args: argparse.Namespace,
                                            align_corners=True)
                     probas = classifier.get_probas(logits).detach()
 
+#                ftune_time += time.time() - start
+#                ftune_n += 1
+#
+#                if ftune_n > 100:
+#                    break
                 #np.save(f'{method}_probas.npy', probas.detach().cpu())
                 intersection, union, _ = batch_intersectionAndUnionGPU(probas, gt_q, 2)  # [n_tasks, shot, num_class]
                 intersection, union = intersection.cpu(), union.cpu()
@@ -306,6 +315,9 @@ def episodic_validate(args: argparse.Namespace,
                                                        save_path=save_path,
                                                        flow_q=flow_q)
 
+#            if ftune_n > 100:
+#                break
+        print('Runtime of finetuning ', ftune_time/ftune_n, ' for nks= ', args.refine_nks)
         # ================== Evaluation Metrics on ALl episodes ==================
         for method in all_weights.keys():
             print('========= Method {}==========='.format(method))

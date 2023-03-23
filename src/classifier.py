@@ -395,9 +395,10 @@ class Classifier(object):
                 pseudogt_keyframe = to_one_hot(pseudogt_keyframe, 2)
             else:
                 pseudogt_keyframes = []
+                val_q_pixels_list = []
                 for idx in keyframe_indx:
                     pseudogt_keyframe = create_pseudogt(probas[idx].unsqueeze(0))
-                    #val_q_pixels = val_q_pixels * (pseudogt_keyframe != 255).float() # it is not needed cause there are no invalid pixels
+                    val_q_pixels_list.append(val_q_pixels * (pseudogt_keyframe != 255).float())
                     pseudogt_keyframe = to_one_hot(pseudogt_keyframe, 2)
                     pseudogt_keyframe = pseudogt_keyframe.repeat(Nframes, 1, 1, 1, 1)
                     pseudogt_keyframes.append(pseudogt_keyframe)
@@ -408,7 +409,7 @@ class Classifier(object):
             optimizer = torch.optim.SGD([self.prototype, self.bias], lr=self.lr/10.0)
 
             for iteration in range(1, self.refine_iter):
-                for keyframe_f_q, pseudogt_keyframe in zip(keyframes_f_q, pseudogt_keyframes):
+                for keyframe_f_q, pseudogt_keyframe, val_q_pixels in zip(keyframes_f_q, pseudogt_keyframes, val_q_pixels_list):
                     logits_q = self.get_logits(keyframe_f_q, seqs=seqs, selected_seq=seq)  # [n_tasks, 1, num_class, h, w]
                     keyframe_proba_q = self.get_probas(logits_q, seqs=seqs, selected_seq=seq)
 

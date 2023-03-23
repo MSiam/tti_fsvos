@@ -99,7 +99,7 @@ CLASSIFIER:
   cls_visdom_freq: 5
   single_proto_flag: False
   refine_keyframes_ftune: True
-  refine_iter: 10
+  refine_iter: 30
   refine_oracle: False
   refine_nks: 1
 
