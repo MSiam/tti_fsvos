@@ -5,7 +5,7 @@ from torch import nn
 import torch.nn.functional as F
 from .resnet import resnet50, resnet101
 from .vgg import vgg16_bn
-
+from .video_swin import build_swin_b_backbone
 
 class PPM(nn.Module):
     def __init__(self, in_dim, reduction_dim, bins):
@@ -67,33 +67,39 @@ class PSPNet(nn.Module):
         self.use_ppm = use_ppm
         self.m_scale = args.m_scale
         self.bottleneck_dim = args.bottleneck_dim
-        if hasattr(args, 'pretrain_cl'):
-            self.pretrain_cl = args.pretrain_cl
-        else:
-            self.pretrain_cl = False
+        self.multires_classifier = False if not hasattr(args, 'multires_classifier') else args.multires_classifier
+        self.classifier_chs = [self.bottleneck_dim, 256]
 
+        self.arch = args.arch
         if args.arch == 'resnet':
             if args.layers == 50:
                 resnet = resnet50(pretrained=args.pretrained)
             else:
                 resnet = resnet101(pretrained=args.pretrained)
-            self.layer0 = nn.Sequential(resnet.conv1, resnet.bn1, resnet.relu, resnet.conv2, resnet.bn2, resnet.relu, resnet.conv3, resnet.bn3, resnet.relu, resnet.maxpool)
+            self.layer0 = nn.Sequential(resnet.conv1, resnet.bn1, resnet.relu, resnet.conv2, resnet.bn2, resnet.relu, resnet.conv3,
+                                        resnet.bn3, resnet.relu, resnet.maxpool)
             self.layer1, self.layer2, self.layer3, self.layer4 = resnet.layer1, resnet.layer2, resnet.layer3, resnet.layer4
             self.feature_res = (53, 53)
         elif args.arch == 'vgg':
             vgg = vgg16_bn(pretrained=args.pretrained)
             self.layer0, self.layer1, self.layer2, self.layer3, self.layer4 = get_vgg16_layer(vgg)
+        elif args.arch == 'videoswin':
+            self.videoswin_backbone = build_swin_b_backbone(
+                "/local/riemann/home/rezaul/projects/medvt2-main/pretrained/swin_base_patch244_window877_kinetics400_22k.pth"
+            )
+            self.feature_res = (8, 14)
 
-        for n, m in self.layer3.named_modules():
-            if 'conv2' in n:
-                m.dilation, m.padding, m.stride = (2, 2), (2, 2), (1, 1)
-            elif 'downsample.0' in n:
-                m.stride = (1, 1)
-        for n, m in self.layer4.named_modules():
-            if 'conv2' in n:
-                m.dilation, m.padding, m.stride = (4, 4), (4, 4), (1, 1)
-            elif 'downsample.0' in n:
-                m.stride = (1, 1)
+        if self.arch != "videoswin":
+            for n, m in self.layer3.named_modules():
+                if 'conv2' in n:
+                    m.dilation, m.padding, m.stride = (2, 2), (2, 2), (1, 1)
+                elif 'downsample.0' in n:
+                    m.stride = (1, 1)
+            for n, m in self.layer4.named_modules():
+                if 'conv2' in n:
+                    m.dilation, m.padding, m.stride = (4, 4), (4, 4), (1, 1)
+                elif 'downsample.0' in n:
+                    m.stride = (1, 1)
         if self.m_scale:
             fea_dim = 1024 + 512
         else:
@@ -101,35 +107,42 @@ class PSPNet(nn.Module):
                 fea_dim = 2048
             elif args.arch == 'vgg':
                 fea_dim = 512
+            elif args.arch == 'videoswin':
+                fea_dim = 1024
+
         if use_ppm:
             self.ppm = PPM(fea_dim, int(fea_dim/len(args.bins)), args.bins)
             fea_dim *= 2
-            self.bottleneck = nn.Sequential(
-                nn.Conv2d(fea_dim, self.bottleneck_dim, kernel_size=3, padding=1, bias=False),
+
+        self.bottleneck = nn.Sequential(
+            nn.Conv2d(fea_dim, self.bottleneck_dim, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(self.bottleneck_dim),
+            nn.ReLU(inplace=True),
+            nn.Dropout2d(p=args.dropout))
+
+        if self.multires_classifier:
+            self.multires_mixer = nn.Sequential(
+                nn.Conv2d(self.classifier_chs[0] + self.classifier_chs[1], self.bottleneck_dim, kernel_size=1),
                 nn.BatchNorm2d(self.bottleneck_dim),
-                nn.ReLU(inplace=True),
-                nn.Dropout2d(p=args.dropout))
-
-        if not self.pretrain_cl:
-            self.classifier = nn.Conv2d(self.bottleneck_dim, args.num_classes_tr, kernel_size=1)
-
-        if hasattr(args, 'cl_dim'):
-            self.avg_pool = nn.AdaptiveAvgPool2d((7, 7))
-            self.cl_proj_head = nn.Sequential(
-                    nn.Conv2d(args.cl_in_channels, args.cl_dim, kernel_size=1, padding=1, bias=False),
-                    nn.BatchNorm2d(args.cl_dim),
-                    nn.ReLU(inplace=True),
-                    nn.Conv2d(args.cl_dim, args.cl_dim, kernel_size=1, padding=1, bias=False),
-                    )
+                nn.ReLU(inplace=True))
+        self.classifier = nn.ModuleList([nn.Conv2d(self.bottleneck_dim, args.num_classes_tr, kernel_size=1)])
 
     def get_backbone_modules(self):
-        return [self.layer0, self.layer1, self.layer2, self.layer3, self.layer4]
+        if self.arch == "videoswin":
+            return [self.videoswin_backbone]
+        else:
+            return [self.layer0, self.layer1, self.layer2, self.layer3, self.layer4]
 
     def get_new_modules(self):
         if self.use_ppm:
-            return [self.ppm, self.bottleneck, self.classifier]
+            modules = [self.ppm, self.bottleneck, self.classifier]
         else:
-            return [self.bottleneck, self.classifier]
+            modules = [self.bottleneck, self.classifier]
+
+        if self.multires_classifier:
+            modules += [self.multires_mixer]
+
+        return modules
 
     def set_feature_res(self, size):
         self.feature_res = (int(np.ceil(size[0]/8.0)), int(np.ceil(size[1]/8.0)))
@@ -139,60 +152,56 @@ class PSPNet(nn.Module):
             if not isinstance(m, nn.BatchNorm2d):
                 m.eval()
 
-    def forward(self, x, avg_pool=False, projection=False, interm=False):
+    def forward(self, x, using_sprt=False):
         x_size = x.size()
-        assert (x_size[2]-1) % 8 == 0 and (x_size[3]-1) % 8 == 0
-        H = int((x_size[2] - 1) / 8 * self.zoom_factor + 1)
-        W = int((x_size[3] - 1) / 8 * self.zoom_factor + 1)
+        assert (x_size[-2]-1) % 8 == 0 and (x_size[-1]-1) % 8 == 0
+        H = int((x_size[-2] - 1) / 8 * self.zoom_factor + 1)
+        W = int((x_size[-1] - 1) / 8 * self.zoom_factor + 1)
 
-        x = self.extract_features(x, avg_pool=avg_pool, projection=projection, interm=interm)
-        if len(x) == 2:
-            x, extras = x
-        else:
-            extras = None
-
-        if not self.pretrain_cl:
-            x = self.classify(x, (H, W))
-
-        if extras is None:
-            return x
-        else:
-            return x, extras
-
-    def cl_proj(self, x, avg_pool=False):
-        if avg_pool:
-            x = self.avg_pool(x)
-        x = self.cl_proj_head(x)
+        x = self.extract_features(x, using_sprt=using_sprt)
+        x = self.classify(x, (H, W))
         return x
 
-    def extract_features(self, x, avg_pool=False, projection=False, interm=False):
-        x = self.layer0(x)
-        x = self.layer1(x)
-        x_2 = self.layer2(x)
-        x_3 = self.layer3(x_2)
-        if interm:
-            interm_feats = x_3
-        if self.m_scale:
-            x = torch.cat([x_2, x_3], dim=1)
+    def extract_features(self, x, using_sprt=False):
+        if self.arch == 'videoswin':
+            if len(x.shape) < 5:
+                if using_sprt:
+                    # Support set are single images has Shot x 3 x H x W
+                    x = x.unsqueeze(1)
+                else:
+                    # Query set has T x 3 x H x W
+                    x = x.unsqueeze(0)
+
+            x = self.videoswin_backbone(x.permute(0,2,1,3,4))
+            x_1 = x[0].permute(0,2,1,3,4)
+            x_1 = x_1.view(-1, *x_1.shape[-3:]).contiguous()
+
+            x = x[-1].permute(0,2,1,3,4)
+            x = x.view(-1, *x.shape[-3:]).contiguous()
         else:
-            x = self.layer4(x_3)
+            x = self.layer0(x)
+            x_1 = self.layer1(x)
+            x_2 = self.layer2(x_1)
+            x_3 = self.layer3(x_2)
+            if self.m_scale:
+                x = torch.cat([x_2, x_3], dim=1)
+            else:
+                x = self.layer4(x_3)
 
         if self.use_ppm:
             x = self.ppm(x)
+
         x = self.bottleneck(x)
 
-        if interm:
-            if projection:
-                return x, self.cl_proj(interm_feats, avg_pool=avg_pool)
-            else:
-                return x, interm_feats
-        elif projection:
-            return x, self.cl_proj(x, avg_pool=avg_pool)
+        if self.multires_classifier:
+            x = F.interpolate(x, x_1.shape[-2:], mode='bilinear', align_corners=True)
+            x = self.multires_mixer(torch.cat([x, x_1], dim=1))
+            return [x]
         else:
-            return x
+            return [x]
 
     def classify(self, features, shape):
-        x = self.classifier(features)
+        x = self.classifier[-1](features[-1])
         if self.zoom_factor != 1:
             x = F.interpolate(x, size=shape, mode='bilinear', align_corners=True)
         return x
