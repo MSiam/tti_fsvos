@@ -1,4 +1,5 @@
 # Temporal Transductive Inference for Few-shot Video Semantic Segmentation
+Full length paper accepted in IJCV 2025, Short paper accepted in ML4AD Workshop in NeurIPS 2021. 
 
 <div align="center">
 <img src="https://github.com/MSiam/tti_fsvos/blob/1bcf3b4de872ce5ab5f18afca57bec6293511627/figures/IJCV_TTI_Overview.png" width="60%" height="100%"><br><br>
