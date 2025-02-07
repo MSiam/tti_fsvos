@@ -1,7 +1,7 @@
 # Temporal Transductive Inference for Few-shot Video Semantic Segmentation
 
 <div align="center">
-<img src="https://github.com/MSiam/tti_fsvos/blob/main/figures/tti_overview.png" width="60%" height="100%"><br><br>
+<img src="https://github.com/MSiam/tti_fsvos/blob/1bcf3b4de872ce5ab5f18afca57bec6293511627/figures/IJCV_TTI_Overview.png" width="60%" height="100%"><br><br>
 </div>
 
 ## Getting Started
