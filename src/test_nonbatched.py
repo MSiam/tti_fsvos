@@ -26,6 +26,7 @@ import time
 from .visu import make_episode_visualization, make_episode_visualization_cv2, \
                   make_keyframes_vis
 from typing import Tuple
+from src.davis_metrics import db_eval_boundary
 
 def parse_args() -> None:
     parser = argparse.ArgumentParser(description='Testing')
@@ -66,7 +67,17 @@ def main_worker(rank: int,
         assert os.path.isfile(filepath), filepath
         print("=> loading weight '{}'".format(filepath))
         checkpoint = torch.load(filepath)
-        model.load_state_dict(checkpoint['state_dict'], strict=False)
+        state_dict = {}
+        for key, value in checkpoint['state_dict'].items():
+            if 'module.classifier.' in key:
+                if not key.split('.')[2].isdigit():
+                    state_dict[key.replace('module.classifier.', 'module.classifier.0.')] = checkpoint['state_dict'][key]
+                else:
+                    state_dict[key] = checkpoint['state_dict'][key]
+            else:
+                state_dict[key] = checkpoint['state_dict'][key]
+
+        model.load_state_dict(state_dict, strict=False)
         print("=> loaded weight '{}'".format(filepath))
     else:
         print("=> Not loading anything")
@@ -111,6 +122,9 @@ def episodic_validate(args: argparse.Namespace,
     if not hasattr(args, 'vc_wins'):
         args.vc_wins = [15]
 
+    if not hasattr(args, 'multires_classifier'):
+        args.multires_classifier = False
+
     all_weights = {'tti': [1.0,'auto','auto','auto'], 'repri': [1.0,'auto','auto',0.0]}
     if hasattr(args,'selected_weights') and len(args.selected_weights) != 0:
         all_weights = {'quickval': args.selected_weights}
@@ -135,6 +149,7 @@ def episodic_validate(args: argparse.Namespace,
 
         IoU = {k: defaultdict(int) for k in all_weights.keys()}
         Fscores = {k: defaultdict(int) for k in all_weights.keys()}
+        cls_n_fsc = {k: defaultdict(int)  for k in all_weights.keys()}
 
         # =============== episode = group of tasks ===============
         runtime = {k: 0  for k in all_weights.keys()}
@@ -161,23 +176,42 @@ def episodic_validate(args: argparse.Namespace,
                 s_label = s_label.to(dist.get_rank(), non_blocking=True)
                 qry_img = qry_img.to(dist.get_rank(), non_blocking=True)
 
-                f_s = model.module.extract_features(spprt_imgs.squeeze(0))
+                f_s = model.module.extract_features(spprt_imgs.squeeze(0), using_sprt=True)
 
                 if qry_img.ndim > 4:
                     # B x N x C x H x W --> N x C X H X W
                     qry_img = qry_img.squeeze(0) # Squeeze batch dim
                     q_label = q_label.squeeze(0) # Squeeze batch dim
 
-                f_q = model.module.extract_features(qry_img)
+                clip_len = args.inference_clip_len
+                nclips = int(np.ceil(qry_img.shape[0]/clip_len))
+                f_q = []
+                for clip_idx in range(nclips):
+                    if clip_idx == nclips - 1:
+                        f_q_clip = model.module.extract_features(qry_img[clip_idx*clip_len:(clip_idx+1)*clip_len])
+                    else:
+                        f_q_clip = model.module.extract_features(qry_img[clip_idx*clip_len:(clip_idx+1)*clip_len])
+                    if len(f_q) == 0:
+                        f_q = [[] for i in range(len(f_q_clip))]
 
-                Nframes = f_q.size(0)
-                shot = f_s.size(0)
+                    for i in range(len(f_q_clip)):
+                        f_q[i].append(f_q_clip[i].detach())
 
+                    torch.cuda.empty_cache()
+
+                f_q = [torch.cat(f_q[i], dim=0) for i in range(len(f_q))]
+
+                Nframes = f_q[0].size(0)
+                shot = f_s[0].size(0)
                 iter_num += Nframes
 
                 n_shots = torch.tensor([shot] * Nframes).to(dist.get_rank(), non_blocking=True)
-                features_s = f_s.repeat(Nframes, 1, 1, 1, 1).detach()
-                features_q = f_q.detach().unsqueeze(1)
+                n_layers = len(f_q)
+                features_s = []
+                features_q = []
+                for layerno in range(n_layers):
+                    features_s.append(f_s[layerno].repeat(Nframes, 1, 1, 1, 1).detach())
+                    features_q.append(f_q[layerno].detach().unsqueeze(1))
 
                 gt_s = s_label.repeat(Nframes, 1, 1, 1)
                 gt_q = q_label.unsqueeze(1)
@@ -197,48 +231,58 @@ def episodic_validate(args: argparse.Namespace,
 
             # =========== Normalize features along channel dimension ===============
             if args.norm_feat:
-                features_s = F.normalize(features_s, dim=2)
-                features_q = F.normalize(features_q, dim=2)
+                for layerno in range(n_layers):
+                    features_s[layerno] = F.normalize(features_s[layerno], dim=2)
+                    features_q[layerno] = F.normalize(features_q[layerno], dim=2)
 
             for method, weights in all_weights.items():
                 # =========== Create a callback is args.visdom_port != -1 ===============
                 callback = VisdomLogger(port=args.visdom_port, env=args.visdom_env) if use_callback else None
 
                 # ===========  Initialize the classifier + prototypes + F/B parameter Π ===============
-                classifier = Classifier(args)
-                classifier.init_prototypes(features_s, features_q, gt_s, gt_q, classes, callback, seqs=seqs)
-                batch_deltas = classifier.compute_FB_param(features_q=features_q, gt_q=gt_q, seqs=seqs)
+                probas_multires = []
+                for layerno in range(len(features_q)):
+                    classifier = Classifier(args)#, model.module.classifier_chs[layerno])
+                    classifier.init_prototypes(features_s[layerno], features_q[layerno], gt_s, gt_q, classes, callback, seqs=seqs)
+                    batch_deltas = classifier.compute_FB_param(features_q=features_q[layerno], gt_q=gt_q, seqs=seqs)
 
-                # =========== Perform TTI inference ===============
-                batch_deltas = classifier.TTI(features_s, features_q, gt_s, gt_q, classes, n_shots, seqs, callback,
-                                                weights=weights)
-                t1 = time.time()
-                runtime[method] += t1 - t0
-                logits = classifier.get_logits(features_q, seqs=seqs)  # [n_tasks, shot, h, w]
-                logits = F.interpolate(logits,
-                                       size=(H, W),
-                                       mode='bilinear',
-                                       align_corners=True)
-                probas = classifier.get_probas(logits).detach()
-                if args.visu_keyframes:
-                    root = os.path.join('plots', 'episodes', method, 'split_%d'%args.train_split)
-                    os.makedirs(root, exist_ok=True)
-                    save_path = os.path.join(root, f'run_{run}_iter_{iter_num}.png')
-                    make_keyframes_vis(probas=probas, img_q=all_qry['imgs'].copy(),
-                                       f_q=features_q, f_s=features_s, gt_s=gt_s, gt_q=gt_q,
-                                       paths=all_qry['paths'], save_path=save_path)
-
-                if args.refine_keyframes_ftune and method == "tti":
-                    # gt_q is only used to identify valid pixels and remove ones from padding for aug.
-                    classifier.ftune_selected_keyframe(all_probas=probas, all_f_q=features_q, all_f_s=features_s,
-                                                       all_gt_s=gt_s, all_gt_q=gt_q, seqs=seqs,
-                                                       refine_oracle=args.refine_oracle)
-                    logits = classifier.get_logits(features_q, seqs=seqs)  # [n_tasks, shot, h, w]
+                    # =========== Perform TTI inference ===============
+                    batch_deltas = classifier.TTI(features_s[layerno], features_q[layerno], gt_s, gt_q,
+                                                           classes, n_shots, seqs, callback,
+                                                           weights=weights, adap_kshot=args.adap_kshot)
+                    t1 = time.time()
+                    runtime[method] += t1 - t0
+                    logits = classifier.get_logits(features_q[layerno], seqs=seqs)  # [n_tasks, shot, h, w]
                     logits = F.interpolate(logits,
                                            size=(H, W),
                                            mode='bilinear',
                                            align_corners=True)
+
                     probas = classifier.get_probas(logits).detach()
+                    if args.visu_keyframes:
+                        root = os.path.join('plots', 'episodes', method, 'split_%d'%args.train_split)
+                        os.makedirs(root, exist_ok=True)
+                        save_path = os.path.join(root, f'run_{run}_iter_{iter_num}.png')
+                        make_keyframes_vis(probas=probas, img_q=all_qry['imgs'].copy(),
+                                           f_q=features_q[layerno], f_s=features_s[layerno], gt_s=gt_s, gt_q=gt_q,
+                                           paths=all_qry['paths'], save_path=save_path)
+
+                    if args.refine_keyframes_ftune and method == "tti":
+                        # gt_q is only used to identify valid pixels and remove ones from padding for aug.
+                        classifier.ftune_selected_keyframe(all_probas=probas, all_f_q=features_q[layerno],
+                                                           all_f_s=features_s[layerno], all_gt_s=gt_s,
+                                                           all_gt_q=gt_q, seqs=seqs, refine_oracle=args.refine_oracle)
+
+                        logits = classifier.get_logits(features_q[layerno], seqs=seqs)  # [n_tasks, shot, h, w]
+                        logits = F.interpolate(logits,
+                                               size=(H, W),
+                                               mode='bilinear',
+                                               align_corners=True)
+                        probas = classifier.get_probas(logits).detach()
+
+                    probas_multires.append(probas)
+
+                probas = torch.stack(probas_multires).mean(dim=0)
 
                 #np.save(f'{method}_probas.npy', probas.detach().cpu())
                 intersection, union, _ = batch_intersectionAndUnionGPU(probas, gt_q, 2)  # [n_tasks, shot, num_class]
@@ -264,6 +308,12 @@ def episodic_validate(args: argparse.Namespace,
                 for i, class_ in enumerate(classes):
                     cls_intersection[method][class_] += intersection[i, 0, 1]  # Do not count background
                     cls_union[method][class_] += union[i, 0, 1]
+
+                    proba = probas[i].argmax(1).squeeze(0).detach().cpu().numpy()
+                    gt = gt_q[i].squeeze(0).cpu().numpy()
+                    Fscores[method][class_] += db_eval_boundary(proba, gt)
+                    cls_n_fsc[method][class_] += 1
+
                     if seqs[i] not in visited_seqs:
                         visited_seqs.append(seqs[i])
                         for kwin in video_consistency.keys():
@@ -274,8 +324,8 @@ def episodic_validate(args: argparse.Namespace,
 
                 for class_ in cls_union[method]:
                     IoU[method][class_] = cls_intersection[method][class_] / (cls_union[method][class_] + 1e-10)
-                    Fscores[method][class_] = 2 * cls_intersection[method][class_] / \
-                                                (cls_union[method][class_] + cls_intersection[method][class_] + 1e-10)
+                    #Fscores[method][class_] = 2 * cls_intersection[method][class_] / \
+                    #                            (cls_union[method][class_] + cls_intersection[method][class_] + 1e-10)
 
                 if (iter_num % 200 == 0):
                     mIoU = np.mean([IoU[method][i] for i in IoU[method]])
@@ -296,20 +346,24 @@ def episodic_validate(args: argparse.Namespace,
                         flow_q = None
 
                         make_episode_visualization_cv2(img_s=all_sprt['imgs'][0].copy(),
-                                                       img_q=all_qry['imgs'][i].copy(),
-                                                       gt_s=all_sprt['masks'][0].copy(),
-                                                       gt_q=all_qry['masks'][i].copy(),
-                                                       path_s=all_sprt['paths'],
-                                                       path_q=all_qry['paths'][i],
-                                                       preds=probas[i].cpu().numpy().copy(),
-                                                       save_path=save_path,
-                                                       flow_q=flow_q)
+                                                   img_q=all_qry['imgs'][i].copy(),
+                                                   gt_s=all_sprt['masks'][0].copy(),
+                                                   gt_q=all_qry['masks'][i].copy(),
+                                                   path_s=all_sprt['paths'],
+                                                   path_q=all_qry['paths'][i],
+                                                   preds=probas[i].cpu().numpy().copy(),
+                                                   save_path=save_path,
+                                                   flow_q=flow_q)
 
         # ================== Evaluation Metrics on ALl episodes ==================
         for method in all_weights.keys():
             print('========= Method {}==========='.format(method))
             runtimes[method][run] = runtime[method] / float(len(val_loader))
             mIoU = np.mean(list(IoU[method].values()))
+
+            for class_ in Fscores[method]:
+                Fscores[method][class_] /= cls_n_fsc[method][class_]
+
             fscore = np.mean(list(Fscores[method].values()))
 
             for kwin in cls_vc[method].keys():

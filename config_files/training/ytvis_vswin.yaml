@@ -10,12 +10,11 @@ DATA:
   class_mapping: None
   class_names_list: None
   val_list: None
-  sample_per_class: 10
   num_classes_tr: 31  # Counting background for training
   num_classes_val: 10
   use_split_coco: False
   workers: 4
-  image_size: [241, 425]
+  image_size: [241, 425] #[369, 641]
   padding_label: 255
   mean: [0.485, 0.456, 0.406]
   std: [0.229, 0.224, 0.225]
@@ -24,19 +23,18 @@ DATA:
   rot_min: None
   rot_max: None
   augmentations: []
-  multi_rnd_sprt: False # YTVIS V1: False, YTVIS V2: True (More stable)
 
 TRAIN:
-  ckpt_path: checkpoints/
+  ckpt_path: /local/riemann1/home/msiam/checkpoints_nometalearning_videoswin_multires/
   resume_training: False
-  batch_size: 7
-  epochs: 100
+  batch_size: 4
+  epochs: 50
   log_freq : 50
   visdom_port: -1
   visdom_env: ""
   debug: False
   save_models: True
-  lr: 0.0025
+  lr: 0.0001
   scale_lr: 1.0
   mixup: False
   lr_stepsize: 30
@@ -44,46 +42,32 @@ TRAIN:
   gamma: 0.1
   nesterov: True
   weight_decay: 0.0001
-  main_optim: SGD
+  main_optim: AdamW
   scheduler: cosine
   milestones: [40, 70]
 
 MODEL:
-  arch: resnet
+  arch: videoswin
   pretrained: True  # Means the backbone has been pre-trained
   bins: [1, 2, 3, 6]
   dropout: 0.1
   m_scale: False
   layers: 50
   bottleneck_dim: 512
+  use_ppm: False
   multires_classifier: True
 
 EVALUATION:
   episodic_val: False
-  temporal_episodic_val: 3 #0: None, 1: TAO, 2: VSPW, 3: YTVIS
-  shot: 1
-  query_frame: 5
-  random_shot: False
-  norm_feat: True
-  batch_size_val: 200
+  temporal_episodic_val: 0
+  batch_size_val: 10
   manual_seed: 2020
   ckpt_used: best
-  FB_param_noise: 0
-  test_num: 1000
   smoothing: True
-  n_runs: 2
-  save_oracle: False
-  eval_vc: True
-  vc_size_th: 0
-  vc_wins: [3]
-  selected_weights: []
-  inference_clip_len: 30
+  eval_vc: False
 
 VISUALIZATION:
   visu: False
-  vis_dir: /local/riemann1/home/msiam/debug_bdry/ours_vis/
-  analysis_dir: 'analysis/'
-  visu_keyframes: False
 
 CLASSIFIER:
   distance: cos
@@ -95,15 +79,13 @@ CLASSIFIER:
   FB_param_update: [10]
   scl_temperature: 0.1
   nviews: 2
-  tloss_type: [temporal_repri, pos_neg_steer_avg]
-  temporal_window: 3
-  temporal_step: 1
+  tloss_type: pos_steer_avg
   cls_visdom_freq: 5
-  single_proto_flag: False
-  refine_keyframes_ftune: True
-  refine_iter: 10
-  refine_oracle: False
-  adap_kshot: False
 
 DISTRIBUTED:
   gpus: [0]
+
+WANDB:
+  wandb_user: 'yvv'
+  wandb_project: 'tfss'
+  wandb_run_name: ''
