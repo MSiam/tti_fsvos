@@ -25,10 +25,10 @@ DATA:
   augmentations: []
 
 TRAIN:
-  ckpt_path: checkpoints/
+  ckpt_path: /local/riemann1/home/msiam/checkpoints_nometalearning_r50/
   resume_training: False
   batch_size: 6
-  epochs: 10
+  epochs: 50
   log_freq : 50
   visdom_port: -1
   visdom_env: ""
@@ -79,6 +79,7 @@ CLASSIFIER:
   nviews: 2
   tloss_type: pos_steer_avg
   cls_visdom_freq: 5
+  adap_kshot: False
 
 DISTRIBUTED:
   gpus: [0]
