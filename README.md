@@ -102,3 +102,20 @@ Note that this code supports distributed training. If you want to train on multi
 
 We gratefully thank the authors of https://github.com/mboudiaf/RePRI-for-Few-Shot-Segmentation for building upon their code.
 We also rely on https://github.com/scutpaul/DANet, for understanding their Youtube-VIS episodic version.
+
+## References
+Please city my paper if you find it useful in your research
+```
+@article{siamijcv2025,
+	author = {Siam, Mennatullah},
+	date = {2025/03/06},
+	date-added = {2025-05-16 14:50:33 +0300},
+	date-modified = {2025-05-16 14:50:33 +0300},
+	doi = {10.1007/s11263-025-02390-x},
+	id = {Siam2025},
+	isbn = {1573-1405},
+	journal = {International Journal of Computer Vision},
+	title = {Temporal Transductive Inference for Few-Shot Video Object Segmentation},
+	url = {https://doi.org/10.1007/s11263-025-02390-x},
+	year = {2025}}
+```
