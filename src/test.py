@@ -391,7 +391,8 @@ def standard_validate(args: argparse.Namespace,
 
             if images.ndim > 4:
                 # Flatten frames dim with batch
-                images = images.view((-1, *images.shape[-3:]))
+                if args.arch != "videoswin":
+                    images = images.view((-1, *images.shape[-3:]))
                 gt = gt.view((-1, *gt.shape[-2:]))
 
             logits = model(images).detach()

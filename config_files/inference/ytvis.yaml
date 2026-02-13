@@ -79,7 +79,7 @@ EVALUATION:
 
 VISUALIZATION:
   visu: False
-  vis_dir: /local/data0/plots/
+  vis_dir: /local/riemann1/home/msiam/debug_bdry/ours_vis/
   analysis_dir: 'analysis/'
   visu_keyframes: False
 
@@ -101,6 +101,7 @@ CLASSIFIER:
   refine_keyframes_ftune: True
   refine_iter: 10
   refine_oracle: False
+  adap_kshot: False
 
 DISTRIBUTED:
   gpus: [0]
