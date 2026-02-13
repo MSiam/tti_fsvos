@@ -8,7 +8,8 @@ def get_model(args) -> nn.Module:
         model_type = args.model_type
 
     if model_type == 'pspnet':
-        return PSPNet(args, zoom_factor=8, use_ppm=True)
+        use_ppm = True if not hasattr(args, 'use_ppm') else args.use_ppm
+        return PSPNet(args, zoom_factor=8, use_ppm=use_ppm)
     else:
         raise NotImplementedError()
 

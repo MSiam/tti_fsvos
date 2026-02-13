@@ -16,6 +16,9 @@ def get_optimizer(args: argparse.Namespace,
         return torch.optim.Adam(parameters,
                                 weight_decay=args.weight_decay)
 
+    elif args.main_optim == 'AdamW':
+        return torch.optim.AdamW(parameters,
+                                 weight_decay=args.weight_decay)
 
 def get_scheduler(args: argparse.Namespace,
                   optimizer: torch.optim.Optimizer,

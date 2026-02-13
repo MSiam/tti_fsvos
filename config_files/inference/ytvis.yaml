@@ -56,6 +56,7 @@ MODEL:
   m_scale: False
   layers: 50
   bottleneck_dim: 512
+  multires_classifier: True
 
 EVALUATION:
   episodic_val: False
@@ -76,10 +77,11 @@ EVALUATION:
   vc_size_th: 0
   vc_wins: [3]
   selected_weights: []
+  inference_clip_len: 30
 
 VISUALIZATION:
   visu: False
-  vis_dir: /local/data0/plots/
+  vis_dir: /local/riemann1/home/msiam/debug_bdry/ours_vis/
   analysis_dir: 'analysis/'
   visu_keyframes: False
 
@@ -101,6 +103,7 @@ CLASSIFIER:
   refine_keyframes_ftune: True
   refine_iter: 10
   refine_oracle: False
+  adap_kshot: False
 
 DISTRIBUTED:
   gpus: [0]
